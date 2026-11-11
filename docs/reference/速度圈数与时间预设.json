@@ -1,0 +1,37 @@
+{
+  "recipes": {
+    "first_flush": {
+      "turns": 20,
+      "rpm": 50,
+      "timeout_s": 40
+    },
+    "wash": {
+      "turns": 16,
+      "rpm": 50,
+      "timeout_s": 35
+    },
+    "purge": {
+      "turns": 15,
+      "rpm": 60,
+      "timeout_s": 30
+    }
+  },
+  "times_s": {
+    "first_flush": 24.0,
+    "wash": 19.2,
+    "purge": 15.0
+  },
+  "volumes_ml": {
+    "A": 0.8042477193189871,
+    "common": 7.318654245802783,
+    "water_branch": 1.6084954386379742,
+    "sample": 1.0053096491487339,
+    "first_water_path": 8.946949684440757
+  },
+  "reference_ml_per_turn": 0.9,
+  "reference_basis": "厂家YZ1515X-3、16#、50rpm水参考45mL/min，仅作规划",
+  "steps_per_turn_estimate": 200,
+  "steps_basis": "本机5/10rpm剩余步数日志约200步/圈；高转速未证明",
+  "physical_high_speed_verified": false,
+  "native_turns_physical_verified": false
+}

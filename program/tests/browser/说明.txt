@@ -1,0 +1,4 @@
+普通用户不需要运行测试。开发验证需要Node/Playwright与Edge。
+先在program目录运行 python tests/browser/fixture_server.py，再依次运行 node tests/browser/workflow.js 和 node tests/browser/bench.js。测试服务固定8879，注入tests/fakes替身和假的CH340 COM6端口列表，不枚举真实硬件、不打开串口；绝不可将脚本目标改为正在控制实物的服务。测试会生成合成图像、报告和隔离数据，均不是实验测量。PLAYWRIGHT_MODULE、EDGE_PATH可覆盖依赖路径。结束后关闭测试服务。
+
+CH340连接界面专项测试可单独运行 node tests/browser/ch340.js，无需启动上述fixture。该脚本使用随机本地端口和假的HTTP状态，覆盖自动识别、多个/无适配器、蓝牙不自动选择、手动端口、拔插后的连接结果、忙碌锁定和扫描失败重试；不访问8765、不打开真实串口。报告和桌面/手机预览写入tests/browser/test_output/ch340。

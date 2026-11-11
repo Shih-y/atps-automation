@@ -1,0 +1,27 @@
+{
+  "at": "2026-11-11",
+  "source": "用户提供并确认参数的一组5剂净增质量",
+  "readings_g": [
+    1.02
+  ],
+  "doses_per_group": 5,
+  "density_g_ml": 1.0,
+  "balance_resolution_g": 0.01,
+  "groups": 1,
+  "mean_per_dose_ml": 0.204,
+  "deviation_percent": 2.0,
+  "group_rsd_percent": null,
+  "formal_calibration_validated": false,
+  "individual_repeatability_verified": false,
+  "parameters": {
+    "sample": 1,
+    "aspirate_steps": 45,
+    "aspirate_rpm": 5,
+    "chase_steps": 1000,
+    "chase_rpm": 15
+  },
+  "scope": "单组清水参考；瞬间回吸尚未排除，不作为母液交付量或清洗验证",
+  "parameter_binding": "用户明确确认，与2026-11-11 18:11:35—18:14:57（北京时间）的5剂记录对应",
+  "run_started_at": "2026-11-11T10:11:35.785+00:00",
+  "run_finished_at": "2026-11-11T10:14:57.190+00:00"
+}

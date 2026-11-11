@@ -1,0 +1,20 @@
+{
+  "revision": "COM6_shared_20261109",
+  "length_source": "user supplied",
+  "A_cm": 10,
+  "B_cm": 10,
+  "C_cm": 71,
+  "ABC_cm": 91,
+  "sample_cm": 50,
+  "source_11_to_15_cm": 80,
+  "air16_cm": 15,
+  "not_a_pump_calibration": true,
+  "nominal_uncompressed_volume_ml": {
+    "A": 0.8042477193189872,
+    "B": 0.8042477193189872,
+    "C": 5.710158807164809,
+    "ABC": 7.318654245802783,
+    "sample": 1.0053096491487339,
+    "source": 1.6084954386379744
+  }
+}

@@ -1,0 +1,27 @@
+# 本机运行数据与测试产物
+program/data/
+**/test_output/
+**/__pycache__/
+*.py[cod]
+*.log
+*.zip
+
+# 本机环境、编辑器和凭据
+.venv/
+venv/
+node_modules/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 浏览器检查生成的交付根目录截图与报告
+UI*.png
+*BROWSER_TEST_REPORT*
+TEST_REPORT.txt
+CH340_BROWSER_TEST_REPORT.json

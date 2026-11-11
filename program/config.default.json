@@ -1,0 +1,86 @@
+{
+  "strategy": "air_plug_v1",
+  "pump": {
+    "address": 1,
+    "baud": 9600,
+    "stopbits": 1,
+    "aspirate_direction": "ccw",
+    "status_ok": [
+      0
+    ],
+    "status_busy": [
+      4
+    ],
+    "status_mapping_note": "2026-11-09 COM6无水实机：停止与40/41有限动作应答FE；4A查询运行中04/剩余步数，完成00/0；4B设速应答00且4C读回一致。原始证据见实机通信记录/空管命令测试/characterize.json；接收码不作完成码。",
+    "max_rpm": 100,
+    "step_timeout": 120,
+    "transaction_timeout": 2,
+    "poll_interval": 0.1,
+    "status_ack": [
+      254
+    ]
+  },
+  "valve": {
+    "address": 2,
+    "baud": 9600,
+    "stopbits": 1,
+    "timeout": 10,
+    "transaction_timeout": 2,
+    "poll_interval": 0.1
+  },
+  "geometry": {
+    "A_cm": 10,
+    "B_cm": 10,
+    "C_cm": 71,
+    "measured": true,
+    "sample_cm": {
+      "1": 50,
+      "2": 50,
+      "3": 50,
+      "4": 50,
+      "5": 50,
+      "6": 50
+    },
+    "source_cm": {
+      "11": 80,
+      "12": 80,
+      "13": 80,
+      "14": 80,
+      "15": 80
+    },
+    "air16_cm": 15,
+    "layout": "single_front_row",
+    "sample_count": 6
+  },
+  "liquids": {
+    "11": "待填母液名称/浓度/批次",
+    "12": "待填母液名称/浓度/批次",
+    "13": "待填母液名称/浓度/批次",
+    "14": "PEG：待填分子量/浓度/批次",
+    "15": "清水：待填等级/批次"
+  },
+  "reset": {
+    "wash": {
+      "turns": 16,
+      "rpm": 50,
+      "timeout_s": 35
+    },
+    "purge": {
+      "turns": 15,
+      "rpm": 60,
+      "timeout_s": 30
+    },
+    "validated": false,
+    "covers_initial_air_filled_water_branch": false,
+    "evidence": ""
+  },
+  "profiles": [],
+  "layout_confirmations": {
+    "front_backlight_view_user_confirmed": true,
+    "branch_reach_user_confirmed": true
+  },
+  "notes": "COM6共线9600/8N1，泵1阀2；CCW向废液抽吸、CW向样品追送已用水观察确认。A10/B10/C71cm；来源11-15硬管80cm，样品50cm。动作接收FE，查询忙4、完成0且剩余0。2026-11-09完成有限步数水试与16吹扫，用户确认C端出水、无连续水柱；不代表无水膜或完整清洗已验证。2026-11-10新增原生整圈：首次20圈50rpm、常规洗16圈50rpm、空气15圈60rpm，几何及厂家水曲线规划，原生圈和50/60rpm尚未实机验证。清水称重向导支持0.01g天平，5剂成组仅作平均剂量初调。无模拟模式、无启动检查、启动不连接设备。 2026-11-11：网页连接默认自动识别CH340，当前实际COM5；原生CCW20圈50rpm与15圈60rpm完成一次湿试，用户确认C端连续出水及吹扫后无连续水柱、无明显悬滴和飞溅。残水及污染未验证；此前尚未湿试的说明为历史状态。",
+  "communication": {
+    "port": "COM6"
+  }
+}

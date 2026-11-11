@@ -1,0 +1,19 @@
+{
+  "date": "2026-11-11",
+  "source": "用户在对话中提供的测量值",
+  "outlet": "C端",
+  "liquid": "清水",
+  "rpm": 50,
+  "turns_per_reading": 5,
+  "readings_g": [
+    4.61,
+    4.55,
+    4.57
+  ],
+  "balance_resolution_g": 0.01,
+  "density_g_ml_assumed": 1.0,
+  "mean_g_per_five_turns": 4.576666666666667,
+  "mean_ml_per_turn": 0.9153333333333333,
+  "scope": "充水状态下C端整圈排水参考，不代表空气液段实际交付量",
+  "sample_endpoint_validated": false
+}
