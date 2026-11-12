@@ -59,7 +59,7 @@ class Handler(BaseHTTPRequestHandler):
                 if len(parts)!=5: raise ValueError('图片路径无效')
                 return self.reply(c.capture.image_path(parts[3],parts[4]).read_bytes(),mime='image/png')
             if path in ('/','/index.html'): return self.reply((self.server.static/'index.html').read_bytes(),mime='text/html; charset=utf-8')
-            if path in ('/app.js','/bench.js','/live.js','/tubes.js','/free.js','/style.css'):
+            if path in ('/app.js','/bench.js','/live.js','/tubes.js','/free.js','/style.css','/console.js','/console.css','/phase_analysis.js'):
                 mime='text/javascript; charset=utf-8' if path.endswith('.js') else 'text/css; charset=utf-8'
                 return self.reply((self.server.static/path[1:]).read_bytes(),mime=mime)
             return self.reply({'ok':False,'error':'未找到'},404)
@@ -87,6 +87,8 @@ class Handler(BaseHTTPRequestHandler):
             elif path=='/api/config': c.configure(body.get('config'))
             elif path=='/api/calibration/report': return self.reply(c.calibration_report(body))
             elif path=='/api/bench/report': return self.reply(c.bench_report(body))
+            elif path=='/api/reference': return self.reply(c.update_dose_reference(body))
+            elif path=='/api/imaging/begin': return self.reply(c.begin_imaging(body))
             elif path=='/api/action': c.start(body)
             elif path=='/api/ack': c.acknowledge(body)
             elif path=='/api/capture': return self.reply(c.capture_frame(body))

@@ -1,12 +1,19 @@
-普通用户不需要运行测试。开发验证需要Node/Playwright与Edge。
-当前2026-11-12自由调试界面：在program目录运行 node tests/browser/run_free_debug.js。
-运行器自行启动并在结束后关闭自己的8879假硬件服务；若8879已被占用则启动失败，不接管已有进程。
-可用PYTHON指定Python可执行文件，PLAYWRIGHT_MODULE指定Playwright模块，EDGE_PATH指定Edge路径。
-默认使用python、playwright模块和Windows标准Edge位置。报告与截图保存在tests/browser/test_output/free_debug。
-测试覆盖一次吸取追送、最后手动混合、泵阀手动台、停止保留连接、6圈预充与取消操作前提等。
+普通用户不需要运行测试。所有测试只用隔离替身，不控制真实串口或摄像头。
 
-测试服务固定8879，注入tests/fakes替身和假的CH340 COM6端口列表，不枚举真实硬件、不打开串口；绝不可将脚本目标改为正在控制实物的8765服务。所有截图和报告都是软件测试数据，不是实验测量。
+当前2026-11-13界面：
+在program目录运行 node tests/browser/current_console.js。
+它启动自己的8879假HTTP服务，覆盖配方整单提交、整瓶混合/吹扫、手动泵阀、校准、连接、原图分析保存、失败重试和手机布局。
 
-workflow.js和bench.js为较早受校准前提约束界面的测试，保留作历史参考，不作为当前自由调试界面的验收入口。
+前后端联通：
+在program目录运行 node tests/browser/integrated_console.js。
+它启动自己的fixture_server.py，使用正式HTTP/controller及tests/fakes替身，验证真实接口收发、配方分段顺序、离线原图归档、人工标签、参考更新和停止保留连接。
+两个浏览器脚本必须依次运行，不可同时占用8879。端口已占用时启动失败，不接管已有服务。结束时只关闭自身创建的浏览器和测试服务。
 
-CH340连接界面专项测试可单独运行 node tests/browser/ch340.js，无需启动上述fixture。该脚本使用随机本地端口和假的HTTP状态，覆盖自动识别、多个/无适配器、蓝牙不自动选择、手动端口、拔插后的连接结果、忙碌锁定和扫描失败重试；不访问8765、不打开真实串口。报告和桌面/手机预览写入tests/browser/test_output/ch340。
+环境变量：PLAYWRIGHT_MODULE指定Playwright模块，EDGE_PATH指定Edge路径；前后端联通脚本可用PYTHON指定Python可执行文件。默认python、playwright和Windows标准Edge路径。测试需允许本地回环套接字及浏览器子进程。
+报告和截图写入tests/browser/test_output/current_console；联通测试报告写入tests/browser/test_output/integrated_console。
+不得把脚本目标改成正在控制实物的8765服务。测试没有证明真实体积、混合、清洁或判相精度。
+
+独立算法测试：node --test tests/phase_analysis.test.js，使用合成图像，不打开相机。
+后端回归：python -m unittest discover -s tests -v，使用隔离硬件替身和随机回环端口。
+
+run_free_debug.js、free_debug.js、ch340.js、workflow.js、bench.js为旧页面历史测试，保留供查阅，不作为当前默认页面的验收入口。

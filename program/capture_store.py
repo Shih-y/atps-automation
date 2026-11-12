@@ -1,4 +1,4 @@
-"""Fixed single-camera frame + ROI archive. Pure stdlib; no image analysis."""
+"""Fixed camera frame/ROI archive with separately recorded optical candidates."""
 import base64
 import binascii
 import copy
@@ -66,6 +66,35 @@ def validate_png(encoded,width,height):
     if any(pixels[i]>4 for i in range(0,expected,stride)):raise ValueError('PNG滤波类型无效')
     return raw
 
+def validate_analysis(value,rois):
+    """Accept bounded, explicitly unvalidated client results tied to this frame."""
+    if not isinstance(value,dict) or value.get('validated') is not False:
+        raise ValueError('图像算法结果必须标记validated:false，不能代替实机验证')
+    if not isinstance(value.get('method'),str) or not 1<=len(value['method'])<=120:
+        raise ValueError('图像算法结果缺少方法版本')
+    if len(json.dumps(value,ensure_ascii=False,allow_nan=False))>200000:
+        raise ValueError('图像算法元数据过大')
+    given=value.get('rois')
+    if not isinstance(given,list) or any(not isinstance(r,dict) for r in given):
+        raise ValueError('算法ROI无效')
+    def canonical(items):
+        return sorted([{k:r.get(k) for k in ('sample','x','y','width','height')} for r in items],key=lambda r:r['sample'])
+    try:
+        if canonical(given)!=canonical(rois):raise ValueError('算法ROI与本次图像ROI不一致')
+    except TypeError as exc:raise ValueError('算法ROI样品号无效') from exc
+    bottles=value.get('bottles')
+    if not isinstance(bottles,list) or len(bottles)!=len(rois):
+        raise ValueError('算法结果必须与实际ROI一一对应')
+    seen=set()
+    for item in bottles:
+        if not isinstance(item,dict) or type(item.get('sample'))is not int or item['sample'] in seen:
+            raise ValueError('算法样品号重复或无效')
+        if item.get('classification') not in ('single','two_phase','uncertain'):
+            raise ValueError('算法判相只能为候选单相、候选两相或不确定')
+        seen.add(item['sample'])
+    if seen!={r['sample'] for r in rois}:raise ValueError('算法结果样品号不匹配')
+    return copy.deepcopy(value)
+
 class CaptureStore:
     def __init__(self,directory):
         self.root=Path(directory)/'images';self.root.mkdir(parents=True,exist_ok=True)
@@ -111,11 +140,26 @@ class CaptureStore:
         if not current['batch_id'] or payload.get('batch_id')!=current['batch_id']:raise ValueError('采集批次不存在或已过期')
         if current['discarded'] or current['historical']:raise ValueError('本批次已关闭，只可查看历史图像')
         if not current.get('timing_prerequisites_bypassed') and payload.get('alignment_confirmed') is not True:raise ValueError('先确认固定光路和全部目标样品ROI')
-        captured=parse_time(payload.get('captured_at'))
-        if captured<parse_time(current['ready_at']) or captured>utc_now()+timedelta(seconds=10):raise ValueError('采集时间早于批次就绪或晚于本机时间；请核对时钟')
+        origin=payload.get('frame_origin','legacy_unspecified')
+        if origin not in ('camera','import','legacy_unspecified') or ('frame_origin' in payload and origin=='legacy_unspecified'):
+            raise ValueError('图像来源须为camera或import')
+        archive_only=current.get('archive_only') is True and current.get('timing_prerequisites_bypassed') is True
+        loaded=None;captured=None;latest=utc_now()+timedelta(seconds=10)
+        if origin=='import':
+            if not archive_only:raise ValueError('导入图片只允许独立存档，不能用于定时采集')
+            if 'captured_at' not in payload or payload['captured_at'] is not None:raise ValueError('导入图片的拍摄时间未知，captured_at须为null')
+            loaded=parse_time(payload.get('loaded_at'))
+            if loaded>latest:raise ValueError('图片载入时间晚于本机时间；请核对时钟')
+        else:
+            captured=parse_time(payload.get('captured_at'))
+            if captured>latest:raise ValueError('采集时间晚于本机时间；请核对时钟')
+            if not (archive_only and origin=='camera') and captured<parse_time(current['ready_at']):
+                raise ValueError('采集时间早于批次就绪；请重新采集')
         raw=validate_png(payload.get('png_base64'),payload.get('width'),payload.get('height'))
         rois=payload.get('rois')
-        if not isinstance(rois,list) or len(rois)!=len(current['targets']):raise ValueError('必须在同一全景帧提交当前批次全部目标的ROI')
+        partial=current.get('timing_prerequisites_bypassed') and payload.get('allow_partial_rois') is True
+        if not isinstance(rois,list) or len(rois)>len(current['targets']) or (not partial and len(rois)!=len(current['targets'])):
+            raise ValueError('提交全部目标ROI，或明确选择调试原图的部分ROI存档')
         checked=[];seen=set()
         for roi in rois:
             if not isinstance(roi,dict) or any(type(roi.get(k)) is not int for k in ['sample','x','y','width','height']):raise ValueError('ROI样品号和像素坐标必须为整数')
@@ -126,21 +170,33 @@ class CaptureStore:
                 if x<other['x']+other['width'] and other['x']<x+w and y<other['y']+other['height'] and other['y']<y+h:raise ValueError('各样品ROI不可重叠')
             checked.append({'sample':sample,'x':x,'y':y,'width':w,'height':h});seen.add(sample)
         checked.sort(key=lambda r:r['sample'])
+        analysis=validate_analysis(payload['analysis'],checked) if payload.get('analysis') is not None else None
         frame_id=utc_now().strftime('%Y%m%d_%H%M%S_%f')+'_'+secrets.token_hex(4)
         filename='F_'+frame_id+'.png'
         received=utc_now()
-        elapsed=(received-parse_time(current['mix_stopped_at'])).total_seconds() if current.get('mix_stopped_at') else None
-        frame={'alignment_confirmed':payload.get('alignment_confirmed') is True,'frame_id':frame_id,'filename':filename,'captured_at':captured.isoformat(timespec='milliseconds'),
+        timing_basis='server_receive_minus_operator_stop_confirmation'
+        time_basis=received
+        if origin=='import':
+            timing_basis='import_acquisition_time_unknown';time_basis=None
+        elif archive_only and origin=='camera':
+            timing_basis='camera_captured_minus_operator_stop_confirmation';time_basis=captured
+        elapsed=(time_basis-parse_time(current['mix_stopped_at'])).total_seconds() if time_basis and current.get('mix_stopped_at') else None
+        if elapsed is not None and elapsed<0:elapsed=None
+        frame={'alignment_confirmed':payload.get('alignment_confirmed') is True,'frame_id':frame_id,'filename':filename,
+                'frame_origin':origin,'captured_at':captured.isoformat(timespec='milliseconds') if captured else None,
+                'loaded_at':loaded.isoformat(timespec='milliseconds') if loaded else None,
                 'received_at':received.isoformat(timespec='milliseconds'),'width':payload['width'],'height':payload['height'],
                 'view_direction':'fixed_front_row','hardware_mode':current['hardware_mode'],
                 'geometry_signature':current.get('geometry_signature'),
                 'source':current['source'],'mix_stopped_at':current.get('mix_stopped_at'),
                 'nominal_settle_seconds':current.get('nominal_settle_seconds'),
-                'alignment_confirmed':True,'rois':checked,
+                'rois':checked,'roi_complete':len(checked)==len(current['targets']),
+                'unassigned_targets':[s for s in current['targets'] if s not in seen],
                 'elapsed_settle_seconds':round(elapsed,3) if elapsed is not None else None,
-                'timing_basis':'server_receive_minus_operator_stop_confirmation',
-                'exposure_note':'one_video_frame_not_global_shutter_guarantee',
+                'timing_basis':timing_basis,
+                'exposure_note':'imported_image_acquisition_unknown' if origin=='import' else 'one_video_frame_not_global_shutter_guarantee',
                 'url':f"/api/images/{current['batch_id']}/{filename}"}
+        if analysis is not None:frame['analysis']=analysis
         value=copy.deepcopy(current);value['frames'].append(frame)
         shared={k:v for k,v in frame.items() if k!='rois'}
         value['records']=[dict(shared,sample=roi['sample'],roi={k:v for k,v in roi.items() if k!='sample'}) for roi in checked]

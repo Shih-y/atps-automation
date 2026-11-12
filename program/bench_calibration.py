@@ -7,6 +7,33 @@ from capture_store import timestamp
 from motion_planning import motion_plan,analyze_bench_readings,_number
 
 class BenchMixin:
+    def update_dose_reference(self,payload):
+        """Save an operator's endpoint mean; never synthesize repeatability data."""
+        from controller import number,pulse_checked
+        with self.lock:
+            if self.busy or self._user_stopping or self.pending_plug:raise ValueError('先结束当前动作或待送液段，再更新体积参考')
+            if not isinstance(payload,dict):raise ValueError('体积参考须为对象')
+            mean=number(payload.get('mean_per_dose_ml'),.01,1,'每剂实测平均体积mL')
+            p={key:payload.get(key) for key in ('sample','aspirate_steps','aspirate_rpm','chase_steps','chase_rpm')}
+            number(p['sample'],1,6,'参考样品口',True)
+            number(p['aspirate_steps'],1,100,'参考吸取步数',True)
+            number(p['chase_steps'],1,3000,'参考追送步数',True)
+            for phase,minimum in [('aspirate',20),('chase',35)]:
+                rpm=number(p[phase+'_rpm'],.1,min(100,self.config['pump']['max_rpm']),'参考转速')
+                steps=p[phase+'_steps']
+                pulse_checked(dict(steps=steps,rpm=rpm,timeout_s=max(minimum,math.ceil(steps*.36/rpm+10))))
+            reference=dict(at=timestamp(),source='用户输入的端点每剂平均体积参考',method='operator_reported_mean_volume',
+                           user_reported=True,mean_per_dose_ml=mean,parameters=p,readings_g=[],groups=0,
+                           group_rsd_percent=None,formal_calibration_validated=False,
+                           individual_repeatability_verified=False,repeatability_known=False,
+                           scope='仅用于步数估算；未提供逐剂重复测量，不代表母液或其他样品口的实际交付量已验证')
+            path=self.directory/'water_dose_reference.json';temporary=path.with_suffix('.tmp')
+            temporary.write_text(json.dumps(reference,ensure_ascii=False,indent=2,allow_nan=False),encoding='utf-8')
+            temporary.replace(path)
+            self.water_dose_reference=reference
+            self.log('dose_reference_updated',reference=copy.deepcopy(reference))
+            return dict(ok=True,reference=copy.deepcopy(reference))
+
     def _reset_bench(self):
         if not hasattr(self,'bulk_water_reference'):
             path=self.directory/'bulk_water_reference.json'

@@ -62,25 +62,19 @@ class TubeWorkflowTests(unittest.TestCase):
         self.assertFalse(s['tubes']['fully_dry_verified'])
         self.assertEqual([],s['tubes']['primed_ports'])
 
-    def test_recipe_rejects_unprimed_and_nonwater_before_any_motion(self):
-        self.action('water_recipe',water_only=True)
-        self.action('water_recipe',water_only=False)
+    def test_old_recipe_is_retired_even_with_water_checkbox(self):
+        for water_only in (True,False):
+            self.action('water_recipe',water_only=water_only)
+            self.assertIn('已停用',self.c.message)
+            self.assertIn('recipe',self.c.message)
         self.assertEqual([],self.c.hardware.moves)
 
-    def test_requested_recipe_is_split_and_uses_correct_source_directions(self):
+    def test_old_recipe_remains_retired_after_refill(self):
         self.action('refill',sources=[13,14,15]); before=len(self.c.hardware.moves)
         s=self.action('water_recipe',water_only=True)
         moves=self.c.hardware.moves[before:]
-        self.assertEqual(39,len(moves))
-        self.assertEqual([150,300,90],[sum(x.get('steps',0) for x in moves if x['port']==p) for p in [15,14,13]])
-        for i in range(0,len(moves),3):
-            asp,chase,purge=moves[i:i+3]
-            self.assertLessEqual(asp['steps'],45)
-            self.assertEqual('aspirate',asp['direction'])
-            self.assertEqual((1,'dispense',1000,15),(chase['port'],chase['direction'],chase['steps'],chase['rpm']))
-            self.assertEqual(16,purge['port'])
-        self.assertEqual(13,s['tubes']['last_run']['completed_plugs'])
-        self.assertFalse(s['tubes']['last_run']['volume_verified'])
+        self.assertEqual([],moves)
+        self.assertIn('已停用',self.c.message)
 
     def test_unrelated_manual_action_invalidates_trial_readiness(self):
         self.action('refill',sources=[13,14,15])

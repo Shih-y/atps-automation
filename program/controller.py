@@ -127,6 +127,7 @@ class Controller(BenchMixin, TubeMixin, FreeDebugMixin):
         self._reset_bench()
         self._reset_tubes()
         self.volume_run=None
+        self.recipe_run=None
         self.batch_running=False
         self.common = 'unknown'
         self.reset_sequence = None
@@ -156,7 +157,7 @@ class Controller(BenchMixin, TubeMixin, FreeDebugMixin):
                 common=self.common,reset_sequence=self.reset_sequence,pending_plug=self._pending_view(),selected_port=self.selected_port,
                 sources=self.sources,samples=self.samples,logs=self.logs,
                 config=self.config,geometry_signature=signature(self.config),profiles=self.profiles(),imaging=self.capture.current,
-                bench=self.bench,tubes=self.tubes,volume_run=self.volume_run,bulk_water_reference=self.bulk_water_reference,water_dose_reference=self.water_dose_reference,motion_plan=motion_plan(self.config),
+                bench=self.bench,tubes=self.tubes,volume_run=self.volume_run,recipe_run=self.recipe_run,bulk_water_reference=self.bulk_water_reference,water_dose_reference=self.water_dose_reference,motion_plan=motion_plan(self.config),
                 hardware_status=self.hardware.get_telemetry() if self.hardware and hasattr(self.hardware,'get_telemetry') else None))
 
     def _pending_view(self):
@@ -270,7 +271,10 @@ class Controller(BenchMixin, TubeMixin, FreeDebugMixin):
                 if worker.is_alive():raise HardwareError('当前任务未及时退出，停止状态未恢复')
             hardware.recover_after_stop()
             with self.lock:
+                cancelled_recipe=self.recipe_run if self.recipe_run and not self.recipe_run['completed'] else None
+                if cancelled_recipe:cancelled_recipe.update(cancelled=True,completed=False,finished_at=timestamp())
                 self._unknown();self.cancel.clear();self.busy=False
+                self.recipe_run=cancelled_recipe
                 self.state='STOPPED';self.connected=True
                 self.message='已确认停止，串口连接保留。当前任务已取消，可直接执行下一项操作。'
             self.capture.archive()
@@ -285,7 +289,10 @@ class Controller(BenchMixin, TubeMixin, FreeDebugMixin):
         self.cancel.set(); self.ack_event.set()
         with self.lock:
             interrupted_plug=copy.deepcopy(self.pending_plug)
+            cancelled_recipe=self.recipe_run if self.recipe_run and not self.recipe_run['completed'] else None
+            if cancelled_recipe:cancelled_recipe.update(cancelled=True,completed=False,finished_at=timestamp())
             self.prompt=None; self.state='STOPPED'; self.message='已请求软件停止；请确认设备确已停止。流路状态未知，重新连接后复位。'; self._unknown(); self.connected=False
+            self.recipe_run=cancelled_recipe
         try:
             if self.hardware: self.hardware.stop()
         finally:
@@ -647,19 +654,35 @@ class Controller(BenchMixin, TubeMixin, FreeDebugMixin):
                      geometry_signature=signature(self.config),geometry=copy.deepcopy(self.config['geometry']),view_direction='fixed_front_row')
         self.capture._save(value)
 
+    def begin_imaging(self,payload):
+        """Start a browser-camera archive independently of serial connection."""
+        with self.lock:
+            if self.busy or self._user_stopping:raise ValueError('先结束当前动作，再创建图像批次')
+            if not isinstance(payload,dict):raise ValueError('图像批次请求须为对象')
+            targets=payload.get('targets')
+            bid=self.capture.begin(targets,self.mode,source='manual')
+            value=copy.deepcopy(self.capture.current)
+            value.update(sample_timing={str(n):copy.deepcopy(self.samples[str(n)]) for n in targets},
+                         geometry=copy.deepcopy(self.config['geometry']),geometry_signature=signature(self.config),
+                         view_direction='fixed_front_row',timing_prerequisites_bypassed=True,archive_only=True)
+            self.capture._save(value)
+            return dict(ok=True,batch_id=bid,imaging=copy.deepcopy(value))
+
     def capture_frame(self,payload):
         with self.lock:
             if self.pending_plug: raise ValueError('先追送或明确弃去待追送液段')
-            if not self.connected or self.cancel.is_set(): raise ValueError('停止/断开后旧图像批次只能查看，不能继续采集')
-            if self.busy: raise ValueError('先结束液路操作再拍摄')
+            if not self.free_debug and (not self.connected or self.cancel.is_set()): raise ValueError('停止/断开后旧图像批次只能查看，不能继续采集')
+            if self.busy or self._user_stopping: raise ValueError('先结束液路操作再拍摄')
             # CaptureStore validates PNG, ROI and timestamp before any writes.
             result=self.capture.capture_frame(payload)
             value=copy.deepcopy(self.capture.current)
             for record in value['records']:
-                timing=value['sample_timing'][str(record['sample'])]; at=parse_time(record['captured_at'])
+                timing=value['sample_timing'][str(record['sample'])]
+                at=parse_time(record['captured_at']) if record.get('captured_at') else None
                 record['sample_timing']=timing
-                record['elapsed_since_stop_s']=(at-parse_time(timing['last_gas_stop'])).total_seconds() if timing.get('last_gas_stop') else None
-                record['elapsed_since_clear_s']=(at-parse_time(timing['clear_at'])).total_seconds() if timing.get('clear_at') else None
+                for field,clock in [('elapsed_since_stop_s','last_gas_stop'),('elapsed_since_clear_s','clear_at')]:
+                    elapsed=(at-parse_time(timing[clock])).total_seconds() if at and timing.get(clock) else None
+                    record[field]=elapsed if elapsed is not None and elapsed>=0 else None
                 record['classification']='unreviewed'
             self.capture._save(value); result['imaging']=copy.deepcopy(value); return result
 

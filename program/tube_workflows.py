@@ -1,6 +1,5 @@
-"""Observed tube servicing and bounded, explicitly water-only recipe trials."""
+"""Tube refill and drainage; legacy water-only recipe is retired."""
 import copy
-import math
 from capture_store import timestamp
 
 FILL = dict(turns=6, rpm=50, timeout_s=20)
@@ -14,37 +13,6 @@ def ports(value, allowed, name):
             len(set(value)) != len(value)):
         raise ValueError(f'{name}须选择有效且不重复的端口')
     return list(value)
-
-
-def water_trial_plan(reference):
-    """Integer step estimate only, never a validated volume conversion."""
-    p = reference.get('parameters', {})
-    mean = reference.get('mean_per_dose_ml')
-    step = p.get('aspirate_steps')
-    if (type(step) is not int or not 1 <= step <= 100 or
-            type(mean) not in (int, float) or not math.isfinite(mean) or not .05 <= mean <= .5):
-        raise ValueError('保存的清水参考不适合此试验；请先检查可选校准记录')
-    if p.get('sample') not in range(1,7):
-        raise ValueError('该组合试验送至1号瓶；保存的参考不是1号瓶，请先做该瓶的可选校准')
-    asp_rpm, chase_rpm, chase = p.get('aspirate_rpm'), p.get('chase_rpm'), p.get('chase_steps')
-    if (type(chase) is not int or not 1 <= chase <= 3000 or
-            any(type(v) not in (int,float) or not math.isfinite(v) or not .1 <= v <= 100 or round(v*10)!=v*10 for v in (asp_rpm,chase_rpm))):
-        raise ValueError('保存的清水参考缺少有效步数或转速')
-    chase_timeout = max(35, math.ceil(chase*.36/chase_rpm+10))
-    max_steps = min(45, step)
-    asp_timeout = max(20, math.ceil(max_steps*.36/asp_rpm+10))
-    if max(chase_timeout,asp_timeout)>120: raise ValueError('参考参数超出有限动作时间')
-    rows=[]
-    for source,ml in [(15,.5),(14,1.),(13,.3)]:
-        total = int(math.floor(ml*step/mean+.5))
-        chunks=[max_steps]*(total//max_steps)
-        if total%max_steps: chunks.append(total%max_steps)
-        rows.append(dict(source=source,target_ml=ml,total_steps=total,chunks=chunks,
-                         estimated_ml=total*mean/step))
-    if sum(len(r['chunks']) for r in rows)>60: raise ValueError('参考会产生过多液段，请检查校准值')
-    return dict(rows=rows,aspirate_rpm=asp_rpm,aspirate_timeout_s=asp_timeout,
-                chase=dict(steps=chase,rpm=chase_rpm,timeout_s=chase_timeout),
-                reference=copy.deepcopy(reference),volume_verified=False)
 
 
 class TubeMixin:
@@ -114,38 +82,13 @@ class TubeMixin:
         self.common='air_unverified'
         self.tubes['common_air_seen']=not self.free_debug
 
-    def _tube_water_recipe(self, plan):
-        self._tube_observation('这是清水流程试验：确认13、14、15均为清水且支管仍充满；1号瓶已换为空瓶、其支管未预充水，瓶盖通气；C端清洁悬空，16口可吸空气。将依次试加15口0.5、14口1.0、13口0.3 mL。采用已有单组清水参考估算，分段／换来源口尚未定量验证。请在旁观察，飞溅或未送完立即停止。')
-        run=self.tubes['last_run']
-        run.update(plan=plan,completed_plugs=0,volume_verified=False)
-        self.samples['1'].update(condition='unknown',uncertain_delivery=True,uncertainty_note='清水组合流程试验，实际体积待称重')
-        self.tubes['common_air_seen']=False
-        for row in plan['rows']:
-            for steps in row['chunks']:
-                self._status('WATER_RECIPE',f"来源{row['source']} → 1号瓶，第{run['completed_plugs']+1}液段：吸取{steps}步，再追送，最后16口吹扫。")
-                self.common='wet'
-                self._pulse(row['source'],'aspirate',dict(steps=steps,rpm=plan['aspirate_rpm'],timeout_s=plan['aspirate_timeout_s']))
-                self._pulse(1,'dispense',plan['chase'])
-                self.samples['1'].update(last_gas_stop=timestamp(),clear_at=None,settle_s=None)
-                run['completed_plugs']+=1
-                self.log('water_recipe_plug_command_completed',source=row['source'],sample=1,aspirate_steps=steps,actual_ml=None)
-                self._pulse(16,'aspirate',AIR)
-                self.common='air_unverified'
-        self._tube_observation('组合动作已停泵。请确认清水已进入1号瓶，未见飞溅、公共管无连续水柱且C端无明显悬滴。随后称瓶内净增质量；目标约1.80 g，实测才是实际回收量。本确认不代替称重。')
-        self.tubes['common_air_seen']=not self.free_debug
-
     def _tube_action(self, payload):
         op=payload.get('operation')
-        if op not in ('refill','purge','drain_sources','drain_samples','finish','water_recipe'):
+        if op=='water_recipe':raise ValueError('旧清水组合配方已停用；请使用recipe单瓶配方')
+        if op not in ('refill','purge','drain_sources','drain_samples','finish'):
             raise ValueError('未知管路维护步骤')
         selected=ports(payload.get('sources'),range(11,16),'来源口') if op in ('refill','drain_sources','finish') else []
         samples=ports(payload.get('samples'),range(1,7),'样品口') if op in ('drain_samples','finish') else []
-        plan=None
-        if op=='water_recipe':
-            if not self.free_debug and payload.get('water_only') is not True: raise ValueError('必须明确13、14、15全是清水；母液不能使用此参考')
-            if not self.free_debug and (not {13,14,15}.issubset(self.tubes['primed_ports']) or not self.tubes['common_air_seen']):
-                raise ValueError('先在本流程预充13、14、15并观察16口吹扫；重连后不能沿用旧观察')
-            plan=water_trial_plan(self.water_dose_reference)
         self.bench.update(water_ready=False,air_ready=False,delivery_seen=False,delivery_seen_context=None,last_run=None)
         self.reset_sequence=None; self.current_delivery=None
         self.tubes['last_run']=dict(operation=op,sources=selected,samples=samples,started_at=timestamp(),completed=False,volume_verified=False)
@@ -157,7 +100,6 @@ class TubeMixin:
         elif op=='finish':
             self._tube_drain_sources(selected)
             self._tube_drain_samples(samples,common_prepared=True)
-        else: self._tube_water_recipe(plan)
         self.tubes['last_run'].update(completed=True,finished_at=timestamp())
         self.log('tube_workflow_completed',run=copy.deepcopy(self.tubes['last_run']),fully_dry_verified=False)
         self._status('IDLE','所选管路步骤已结束。观察记录仅限本次所选端口；未选管路未知，水膜／残留／实际交付量仍需测量。')

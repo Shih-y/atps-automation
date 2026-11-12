@@ -51,9 +51,12 @@ class FreeDebugTests(unittest.TestCase):
         self.run_free(dict(action='prime',source=13,pulse=dict(steps=20,rpm=2,timeout_s=20)))
         self.assertEqual(1,len(self.c.hardware.moves))
 
-    def test_recipe_without_preconditions_or_checkbox(self):
-        self.run_free(dict(action='tubes',operation='water_recipe'))
-        self.assertEqual(39,len(self.c.hardware.moves))
+    def test_old_water_recipe_is_explicitly_retired_without_motion(self):
+        self.c.config['free_debug']=True
+        self.c.start(dict(action='tubes',operation='water_recipe'));self.c.worker.join(2)
+        self.assertEqual([],self.c.hardware.moves)
+        self.assertIn('已停用',self.c.message)
+        self.assertIn('recipe',self.c.message)
 
     def test_finish_has_no_prompts_or_fake_dry_claim(self):
         s=self.run_free(dict(action='tubes',operation='finish',sources=[13],samples=[1]))
@@ -61,9 +64,12 @@ class FreeDebugTests(unittest.TestCase):
         self.assertFalse(s['tubes']['fully_dry_verified'])
         self.assertEqual([],s['tubes']['source_drained'])
 
-    def test_queue_uses_explicit_parameters_without_profile(self):
-        self.run_free(dict(action='run',items=[dict(debug_parameters=dict(source=13,sample=1)),dict(debug_parameters=dict(source=14,sample=2))]))
-        self.assertEqual([13,1,15,16,14,2,15,16],[m['port'] for m in self.c.hardware.moves])
+    def test_old_queue_is_retired_and_directs_operator_to_single_bottle_recipe(self):
+        self.c.config['free_debug']=True
+        self.c.start(dict(action='run',items=[dict(debug_parameters=dict(source=13,sample=1))]));self.c.worker.join(2)
+        self.assertEqual([],self.c.hardware.moves)
+        self.assertIn('已停用',self.c.message)
+        self.assertIn('recipe',self.c.message)
 
     def test_invalid_pulse_still_rejected_before_motion(self):
         self.c.config['free_debug']=True
@@ -95,18 +101,18 @@ class FreeDebugTests(unittest.TestCase):
         self.assertAlmostEqual(.15,self.c.water_dose_reference['mean_per_dose_ml'])
         self.assertEqual([13,6,16],[m['port'] for m in self.c.hardware.moves])
 
-    def test_one_ml_is_one_aspiration_and_one_delivery_no_extra_bubble(self):
+    def test_one_ml_uses_two_equal_portions_without_automatic_mixing(self):
         s=self.run_free(dict(action='volume',source=14,sample=1,volume_ml=1.))
         moves=self.c.hardware.moves
-        self.assertEqual([14,1,16],[m['port'] for m in moves])
-        self.assertEqual(300,moves[0]['steps'])
-        self.assertEqual(1255,moves[1]['steps'])
-        self.assertEqual([300],s['volume_run']['chunks'])
+        self.assertEqual([14,1,14,1,16],[m['port'] for m in moves])
+        self.assertEqual(150,moves[0]['steps'])
+        self.assertEqual(1105,moves[1]['steps'])
+        self.assertEqual([150,150],s['volume_run']['chunks'])
         self.assertFalse(s['volume_run']['mixing_performed'])
 
-    def test_too_long_single_aspiration_is_rejected_without_silent_splitting(self):
+    def test_over_ten_ml_is_rejected_before_motion(self):
         self.c.config['free_debug']=True
-        self.c.start(dict(action='volume',source=14,sample=1,volume_ml=10.));self.c.worker.join(2)
+        self.c.start(dict(action='volume',source=14,sample=1,volume_ml=10.001));self.c.worker.join(2)
         self.assertEqual([],self.c.hardware.moves)
         self.assertIn('操作未执行',self.c.message)
 
@@ -133,7 +139,7 @@ class FreeDebugTests(unittest.TestCase):
         self.run_free(dict(action='manual_motion',port=16,rotation='ccw',turns=1,rpm=5))
         self.assertEqual(2,len(h.moves))
 
-    def test_user_stop_cancels_queue_without_resuming_it(self):
+    def test_user_stop_cancels_recipe_without_resuming_it(self):
         import threading,time
         self.c.config['free_debug']=True
         started=threading.Event();original=self.c.hardware.move
@@ -141,7 +147,7 @@ class FreeDebugTests(unittest.TestCase):
             started.set();event.wait(2);self.c.hardware._check(event)
             return original(direction,steps,rpm,event)
         self.c.hardware.move=slow
-        self.c.start(dict(action='run',items=[dict(debug_parameters=dict(source=13,sample=1))]*3))
+        self.c.start(dict(action='recipe',sample=1,items=[dict(source=13,volume_ml=.3)]*3))
         self.assertTrue(started.wait(1))
         self.c.stop_keep_connection()
         self.assertTrue(self.c.connected)
