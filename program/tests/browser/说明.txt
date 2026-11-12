@@ -1,4 +1,12 @@
 普通用户不需要运行测试。开发验证需要Node/Playwright与Edge。
-先在program目录运行 python tests/browser/fixture_server.py，再依次运行 node tests/browser/workflow.js 和 node tests/browser/bench.js。测试服务固定8879，注入tests/fakes替身和假的CH340 COM6端口列表，不枚举真实硬件、不打开串口；绝不可将脚本目标改为正在控制实物的服务。测试会生成合成图像、报告和隔离数据，均不是实验测量。PLAYWRIGHT_MODULE、EDGE_PATH可覆盖依赖路径。结束后关闭测试服务。
+当前2026-11-12自由调试界面：在program目录运行 node tests/browser/run_free_debug.js。
+运行器自行启动并在结束后关闭自己的8879假硬件服务；若8879已被占用则启动失败，不接管已有进程。
+可用PYTHON指定Python可执行文件，PLAYWRIGHT_MODULE指定Playwright模块，EDGE_PATH指定Edge路径。
+默认使用python、playwright模块和Windows标准Edge位置。报告与截图保存在tests/browser/test_output/free_debug。
+测试覆盖一次吸取追送、最后手动混合、泵阀手动台、停止保留连接、6圈预充与取消操作前提等。
+
+测试服务固定8879，注入tests/fakes替身和假的CH340 COM6端口列表，不枚举真实硬件、不打开串口；绝不可将脚本目标改为正在控制实物的8765服务。所有截图和报告都是软件测试数据，不是实验测量。
+
+workflow.js和bench.js为较早受校准前提约束界面的测试，保留作历史参考，不作为当前自由调试界面的验收入口。
 
 CH340连接界面专项测试可单独运行 node tests/browser/ch340.js，无需启动上述fixture。该脚本使用随机本地端口和假的HTTP状态，覆盖自动识别、多个/无适配器、蓝牙不自动选择、手动端口、拔插后的连接结果、忙碌锁定和扫描失败重试；不访问8765、不打开真实串口。报告和桌面/手机预览写入tests/browser/test_output/ch340。

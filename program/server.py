@@ -59,7 +59,7 @@ class Handler(BaseHTTPRequestHandler):
                 if len(parts)!=5: raise ValueError('图片路径无效')
                 return self.reply(c.capture.image_path(parts[3],parts[4]).read_bytes(),mime='image/png')
             if path in ('/','/index.html'): return self.reply((self.server.static/'index.html').read_bytes(),mime='text/html; charset=utf-8')
-            if path in ('/app.js','/bench.js','/live.js','/style.css'):
+            if path in ('/app.js','/bench.js','/live.js','/tubes.js','/free.js','/style.css'):
                 mime='text/javascript; charset=utf-8' if path.endswith('.js') else 'text/css; charset=utf-8'
                 return self.reply((self.server.static/path[1:]).read_bytes(),mime=mime)
             return self.reply({'ok':False,'error':'未找到'},404)
@@ -83,7 +83,7 @@ class Handler(BaseHTTPRequestHandler):
             c=self.server.controller; path=urlsplit(self.path).path
             if path=='/api/connect': c.connect(body.get('mode','real'),body.get('pump_port',body.get('port','')),body.get('valve_port',body.get('port','')),auto_detect=body.get('auto_detect',False))
             elif path=='/api/disconnect': c.disconnect()
-            elif path=='/api/stop': c.stop()
+            elif path=='/api/stop': c.stop_keep_connection() if c.free_debug else c.stop()
             elif path=='/api/config': c.configure(body.get('config'))
             elif path=='/api/calibration/report': return self.reply(c.calibration_report(body))
             elif path=='/api/bench/report': return self.reply(c.bench_report(body))

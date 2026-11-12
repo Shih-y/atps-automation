@@ -37,6 +37,13 @@ class DemoHardware:
         self._check(cancel_event)
         self.port = port
 
+    def read_status(self,cancel_event=None):
+        self._check(cancel_event)
+
+    def recover_after_stop(self):
+        if not self.connected:raise HardwareError('Not connected')
+        self._stopped.clear()
+
     def move(self, direction, steps, rpm, cancel_event=None):
         if direction not in ("aspirate", "dispense"):
             raise HardwareError("direction must be aspirate or dispense")

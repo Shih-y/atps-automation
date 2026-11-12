@@ -17,6 +17,8 @@ from capture_store import CaptureStore, parse_time, timestamp
 from transport import SerialHardware, HardwareError, _port_name
 from serial_discovery import scan_serial_ports
 from bench_calibration import BenchMixin
+from tube_workflows import TubeMixin
+from free_debug import FreeDebugMixin
 from motion_planning import motion_plan
 
 ALLOWED_PORTS = set(range(1, 7)) | set(range(11, 17))
@@ -106,7 +108,7 @@ def validate_profile(p, cfg, require_validated=True):
         if p.get('bubble_validated') is not True: pass  # bubbling is a separate opt-in gate
     return p
 
-class Controller(BenchMixin):
+class Controller(BenchMixin, TubeMixin, FreeDebugMixin):
     def __init__(self, directory, default_path=None, hardware_factory=None):
         self.directory = Path(directory); self.directory.mkdir(parents=True, exist_ok=True)
         self.default_path = Path(default_path or Path(__file__).with_name('config.default.json'))
@@ -115,6 +117,7 @@ class Controller(BenchMixin):
         self.lock = threading.RLock(); self.cancel = threading.Event(); self.ack_event = threading.Event()
         self.hardware = None; self.hardware_factory = hardware_factory
         self.mode = 'real'; self.connected = False; self.busy = False; self.worker = None
+        self._user_stopping=False
         self.state = 'DISCONNECTED'; self.message = '扫描 CH340 或手动选择串口，连接后选择要执行的步骤。程序启动不连接或驱动设备。'
         self.prompt = None; self.answer = None; self.logs = []; self.commission_count = 0
         self.capture = CaptureStore(self.directory); self.capture.archive()
@@ -122,6 +125,8 @@ class Controller(BenchMixin):
 
     def _unknown(self):
         self._reset_bench()
+        self._reset_tubes()
+        self.volume_run=None
         self.batch_running=False
         self.common = 'unknown'
         self.reset_sequence = None
@@ -146,12 +151,12 @@ class Controller(BenchMixin):
 
     def snapshot(self):
         with self.lock:
-            return copy.deepcopy(dict(mode=self.mode,connected=self.connected,busy=self.busy,state=self.state,
+            return copy.deepcopy(dict(mode=self.mode,free_debug=self.free_debug,connected=self.connected,busy=self.busy or self._user_stopping,state=self.state,
                 message=self.message,next_step=self.prompt['message'] if self.prompt else self.message,prompt=self.prompt,
                 common=self.common,reset_sequence=self.reset_sequence,pending_plug=self._pending_view(),selected_port=self.selected_port,
                 sources=self.sources,samples=self.samples,logs=self.logs,
                 config=self.config,geometry_signature=signature(self.config),profiles=self.profiles(),imaging=self.capture.current,
-                bench=self.bench,bulk_water_reference=self.bulk_water_reference,water_dose_reference=self.water_dose_reference,motion_plan=motion_plan(self.config),
+                bench=self.bench,tubes=self.tubes,volume_run=self.volume_run,bulk_water_reference=self.bulk_water_reference,water_dose_reference=self.water_dose_reference,motion_plan=motion_plan(self.config),
                 hardware_status=self.hardware.get_telemetry() if self.hardware and hasattr(self.hardware,'get_telemetry') else None))
 
     def _pending_view(self):
@@ -172,6 +177,7 @@ class Controller(BenchMixin):
         return pending
 
     def _pending_guard(self,payload):
+        if self.free_debug:return
         if not self.pending_plug:
             if payload.get('action') in ('chase','discard_loaded'): raise ValueError('当前没有待追送液段')
             return
@@ -204,6 +210,7 @@ class Controller(BenchMixin):
 
     def connect(self, mode='real', pump_port='', valve_port='', auto_detect=False):
         with self.lock:
+            if self._user_stopping:raise ValueError('正在确认停止，请稍候')
             if self.busy: raise ValueError('操作仍在运行；先停止并等待退出')
             if self.pending_plug: raise ValueError('仍有待追送液段；明确弃液复位或停止后再连接')
             if mode != 'real': raise ValueError('本版仅支持实机控制，不提供模拟模式')
@@ -240,10 +247,39 @@ class Controller(BenchMixin):
             self.state='CONNECTED'; self.message=f'已连接 {pump_port}。先确认更换/清洁六个样品瓶和样品管，再执行公共管清洗复位。'; self.log('connected',mode=mode,port=pump_port,auto_detect=auto_detect)
 
     def disconnect(self):
+        if self._user_stopping:raise ValueError('正在确认停止，请稍候再断开')
         self.stop()
         with self.lock:
             if self.hardware: self.hardware.close()
             self.connected=False
+
+    def stop_keep_connection(self):
+        """Cancel the task, confirm stopping, then reuse the same open serial port."""
+        with self.lock:
+            if self._user_stopping:return
+            if not self.connected or not self.hardware:
+                self.stop();return
+            self._user_stopping=True
+            self.cancel.set();self.ack_event.set();self.prompt=None
+            self.state='STOPPING';self.message='正在停止并核对设备；保留串口连接。'
+            worker=self.worker;hardware=self.hardware
+        try:
+            hardware.stop()
+            if worker and worker is not threading.current_thread():
+                worker.join(5)
+                if worker.is_alive():raise HardwareError('当前任务未及时退出，停止状态未恢复')
+            hardware.recover_after_stop()
+            with self.lock:
+                self._unknown();self.cancel.clear();self.busy=False
+                self.state='STOPPED';self.connected=True
+                self.message='已确认停止，串口连接保留。当前任务已取消，可直接执行下一项操作。'
+            self.capture.archive()
+            self.log('user_stop_confirmed_connection_retained',port=self.config.get('communication',{}).get('port'),task_resumed=False)
+        except Exception:
+            self.stop()
+            raise
+        finally:
+            with self.lock:self._user_stopping=False
 
     def stop(self):
         self.cancel.set(); self.ack_event.set()
@@ -294,12 +330,13 @@ class Controller(BenchMixin):
             self.log('validated_batch_procedure',message=message,automatic_physical_observation=False)
         else:self._ask(message)
 
-    def _pulse(self, port, direction, p, commissioning=False, before_move=None):
+    def _pulse(self, port, direction, p, commissioning=False, before_move=None, manual_direction=False):
         pulse_checked(p,commissioning,air_purge=(port==16 and direction=='aspirate'))
         if type(port) is not int or port not in ALLOWED_PORTS: raise ValueError('端口无效；7—10禁用')
         if direction not in ('aspirate','dispense'): raise ValueError('方向无效')
-        if direction == 'dispense' and port not in range(1,7): raise ValueError('反向只允许送向1—6样品口')
-        if direction == 'aspirate' and port in range(1,7): raise ValueError('禁止从样品抽吸进入公共管')
+        if not manual_direction:
+            if direction == 'dispense' and port not in range(1,7): raise ValueError('反向只允许送向1—6样品口')
+            if direction == 'aspirate' and port in range(1,7): raise ValueError('禁止从样品抽吸进入公共管')
         self._check(); self.movement_attempted=True; timed_out=threading.Event()
         def timeout():
             timed_out.set(); self.cancel.set()
@@ -493,9 +530,13 @@ class Controller(BenchMixin):
     def _run_action(self,payload):
         action=payload.get('action')
         self._pending_guard(payload)
+        if self.free_debug and self._free_action(payload):return
+        if action not in ('tubes','clear','magnetic_stop','prepare_capture','capture'):
+            self._reset_tubes()
         if action in ('new_samples','select_port','wash','purge','reset','aspirate','chase','discard_loaded','prime','dose','bubble','run','commission'):
             self.bench.update(water_ready=False,air_ready=False,delivery_seen=False,delivery_seen_context=None,last_run=None)
-        if action=='bench':self._bench_action(payload)
+        if action=='tubes':self._tube_action(payload)
+        elif action=='bench':self._bench_action(payload)
         elif action=='new_samples':
             self._ask('确认1—6样品瓶及支管已清洁并达到已验证初始条件，无水柱/样品残留；瓶盖通气。不得对已装样品直接重置此状态。')
             for s in self.samples.values(): s.update(condition='first',dose_count=0,last_gas_stop=None,clear_at=None,settle_s=None,uncertain_delivery=False,uncertainty_note=None,profile_id=None,timing_basis=None)
@@ -558,23 +599,26 @@ class Controller(BenchMixin):
 
     def start(self,payload):
         with self.lock:
+            if self._user_stopping:raise ValueError('正在确认停止，请稍候')
             if not isinstance(payload,dict): raise ValueError('操作必须为对象')
             if not self.connected or self.cancel.is_set(): raise ValueError('先连接；停止锁定后必须重新连接')
             if self.busy: raise ValueError('已有操作执行或等待确认；请完成当前步骤')
             self._pending_guard(payload)
-            if self.capture.pending and payload.get('action') not in ('clear',): raise ValueError('先完成或明确放弃当前图像批次，再开始新的液路操作')
+            if not self.free_debug and self.capture.pending and payload.get('action') not in ('clear',): raise ValueError('先完成或明确放弃当前图像批次，再开始新的液路操作')
             self.busy=True; self.movement_attempted=False
             def worker():
                 try:
                     self._run_action(payload); self._check()
                     if self.pending_plug:
                         self._status('PLUG_PENDING','液段已吸取并停泵；只可追送同一目标或明确弃液。等待计时继续，超时不会自动移动。')
-                    elif payload.get('action')=='bench':
+                    elif self.free_debug or payload.get('action') in ('bench','tubes'):
                         self._status('IDLE',self.message if self.message else '校准试验步骤已结束；按页面继续。')
                     elif self.reset_sequence in ('washed_unverified','purged_unverified'):
                         self._status('IDLE','有限清洗/吹扫试验已停泵；请观察液头、C端出水或液塞。残水尚未验证，不会自动成为正式加料就绪。')
                     else: self._status('IDLE','当前操作已结束。按下一步继续；仪器动作完成不代表体积或判相已验证。')
                 except Exception as exc:
+                    if self._user_stopping:
+                        self.log('task_cancelled_by_user_stop',error=str(exc));return
                     if isinstance(exc,PendingPlugError) and self.pending_plug and not self.cancel.is_set():
                         with self.lock: self.state='PLUG_PENDING'; self.message=str(exc)
                         self.log('plug_chase_rejected',error=str(exc),plug_id=self.pending_plug['id']); return
@@ -614,8 +658,8 @@ class Controller(BenchMixin):
             for record in value['records']:
                 timing=value['sample_timing'][str(record['sample'])]; at=parse_time(record['captured_at'])
                 record['sample_timing']=timing
-                record['elapsed_since_stop_s']=(at-parse_time(timing['last_gas_stop'])).total_seconds()
-                record['elapsed_since_clear_s']=(at-parse_time(timing['clear_at'])).total_seconds()
+                record['elapsed_since_stop_s']=(at-parse_time(timing['last_gas_stop'])).total_seconds() if timing.get('last_gas_stop') else None
+                record['elapsed_since_clear_s']=(at-parse_time(timing['clear_at'])).total_seconds() if timing.get('clear_at') else None
                 record['classification']='unreviewed'
             self.capture._save(value); result['imaging']=copy.deepcopy(value); return result
 

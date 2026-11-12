@@ -12,6 +12,7 @@ def demo_profiles():
             for s in range(11,16) for v in range(1,7) for c in ('first','continued')]
 
 def install_test_profiles(c):
+    c.config['free_debug']=False  # Legacy calibrated workflow remains explicitly testable.
     c.config['reset'].update(validated=True,covers_initial_air_filled_water_branch=True,evidence='Synthetic test fixture only, not physical evidence')
     c.config['profiles']=demo_profiles()
     for p in c.config['profiles']:

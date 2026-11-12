@@ -30,7 +30,7 @@
     else if(h.pump_status==='stop_requested')pump='已请求停止 · 未确认';
     $('livePump').textContent=pump;
     const confirmed=h.valve_status==='confirmed'&&h.valve_port!=null;
-    $('liveValve').textContent=h.valve_status==='switching'?`正在切换 → ${h.target_port}口`:confirmed?`${h.valve_port}口 · ${name(h.valve_port)}（已读回）`:'阀位未知';
+    $('liveValve').textContent=h.valve_status==='switching'?(h.target_port==null?'正在切换 · 目标口未知':`正在切换 → ${h.target_port}口`):confirmed?`${h.valve_port}口 · ${name(h.valve_port)}（已读回）`:'阀位未知';
     let flow='泵无已确认的进行中动作';
     if(running||h.pump_status==='starting')flow=h.flow==='aspirate'?`${confirmed?name(h.valve_port):'所选口'} → 公共管 → 泵 → C端废液`:h.flow==='dispense'?`C端空气 → 泵 → 公共管 → ${confirmed?name(h.valve_port):'样品口'}`:'流向待核对';
     $('liveFlow').textContent=flow;

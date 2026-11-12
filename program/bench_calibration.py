@@ -38,19 +38,19 @@ class BenchMixin:
             self._status('BENCH_OBSERVE','已按操作者确认的现场状态跳过；未执行泵阀动作，未验证洗净。')
             return
         if operation=='water_seen':
-            if last.get('operation') not in ('fill_water','collect_water') or not last.get('completed'):raise ValueError('先执行引水，并现场看到C端连续出水，再点此按钮')
+            if not self.free_debug and (last.get('operation') not in ('fill_water','collect_water') or not last.get('completed')):raise ValueError('先执行引水，并现场看到C端连续出水，再点此按钮')
             b['water_ready']=True;self.sources['15']={'primed':True,'primed_at':timestamp()}
             self.log('bench_water_front_observed',scope='仅确认水已贯通，未确认洗净');return
         if operation=='air_seen':
-            if last.get('operation') not in ('purge','dose_water') or not last.get('completed'):raise ValueError('先完成吹扫，再观察并确认')
+            if not self.free_debug and (last.get('operation') not in ('purge','dose_water') or not last.get('completed')):raise ValueError('先完成吹扫，再观察并确认')
             b['air_ready']=True;self.log('bench_no_visible_water_column_observed',residual_water_quantified=False);return
         if operation=='dose_seen':
-            if last.get('operation')!='dose_water' or last.get('count')!=1 or not last.get('completed'):raise ValueError('先完成一次试加并看到液体进入指定样品瓶')
-            b['delivery_seen']=True;b['delivery_seen_context']={k:last[k] for k in ('sample','chase_steps','aspirate_rpm','chase_rpm')}
+            if not self.free_debug and (last.get('operation')!='dose_water' or last.get('count')!=1 or not last.get('completed')):raise ValueError('先完成一次试加并看到液体进入指定样品瓶')
+            b['delivery_seen']=True;b['delivery_seen_context']={k:payload.get(k,last.get(k)) for k in ('sample','chase_steps','aspirate_rpm','chase_rpm')}
             self.log('bench_delivery_observed',context=b['delivery_seen_context'],volume_verified=False);return
         if operation not in ('fill_water','collect_water','purge','dose_water'):raise ValueError('未知清水校准步骤')
         # Validate everything before invalidating prior readiness or moving.
-        if operation=='collect_water' and (not b['water_ready'] or self.common!='wet'):
+        if not self.free_debug and operation=='collect_water' and (not b['water_ready'] or self.common!='wet'):
             raise ValueError('整圈称重前，先引水至C端连续出水并点击已出水；公共管必须充水')
         if operation=='dose_water':
             sample=_number(payload.get('sample'),1,6,'样品瓶号',True)
@@ -64,14 +64,14 @@ class BenchMixin:
             aspirate_timeout=max(20,math.ceil(steps*.36/aspirate_rpm+10))
             chase_timeout=max(35,math.ceil(chase*.36/chase_rpm+10))
             if max(aspirate_timeout,chase_timeout)>120:raise ValueError('所选步数与转速预计超出120秒动作上限；减少步数或提高转速后再试')
-            if not b['water_ready'] or not b['air_ready'] or self.common!='air_unverified':raise ValueError('先确认15口水管已充满，并完成公共管吹扫及观察')
-            if count==5 and (not b['delivery_seen'] or b.get('delivery_seen_context')!={'sample':sample,'chase_steps':chase,'aspirate_rpm':aspirate_rpm,'chase_rpm':chase_rpm}):
+            if not self.free_debug and (not b['water_ready'] or not b['air_ready'] or self.common!='air_unverified'):raise ValueError('先确认15口水管已充满，并完成公共管吹扫及观察')
+            if not self.free_debug and count==5 and (not b['delivery_seen'] or b.get('delivery_seen_context')!={'sample':sample,'chase_steps':chase,'aspirate_rpm':aspirate_rpm,'chase_rpm':chase_rpm}):
                 raise ValueError('先对同一瓶、同一追送步数和转速试1剂并确认已经送入；再运行5剂一组')
         b['last_run']={'operation':operation,'started_at':timestamp(),'completed':False}
         self.current_delivery=None;self.reset_sequence=None;b['air_ready']=False
         if operation=='fill_water':
             b['water_ready']=False;b['delivery_seen']=False;b['delivery_seen_context']=None
-            self._pulse(15,'aspirate',plan['first_flush']);self.common='wet'
+            self._pulse(15,'aspirate',(dict(turns=6,rpm=50,timeout_s=20) if self.free_debug else plan['first_flush']));self.common='wet'
             self._status('BENCH_OBSERVE','引水动作已结束；看到C端连续出水后点“已连续出水”。未出水可再引水，异常立即停止。')
         elif operation=='collect_water':
             self._pulse(15,'aspirate',{'turns':5,'rpm':50,'timeout_s':20});self.common='wet'

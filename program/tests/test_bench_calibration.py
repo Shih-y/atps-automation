@@ -35,9 +35,11 @@ class BenchTests(unittest.TestCase):
         self.assertFalse(restarted.config['reset']['validated'])
     def test_saved_single_group_is_not_three_group_calibration(self):
         ref=self.c.snapshot()['water_dose_reference']
-        self.assertEqual([1.02],ref['readings_g'])
-        self.assertAlmostEqual(.204,ref['mean_per_dose_ml'])
-        self.assertEqual(1,ref['groups'])
+        self.assertEqual([],ref['readings_g'])
+        self.assertAlmostEqual(.15,ref['mean_per_dose_ml'])
+        self.assertEqual(0,ref['groups'])
+        self.assertEqual([1.02],ref['previous_reference']['readings_g'])
+        self.assertEqual(45,ref['parameters']['aspirate_steps'])
         self.assertIsNone(ref['group_rsd_percent'])
         self.assertFalse(ref['formal_calibration_validated'])
     def test_new_group_calibration_reference_survives_restart(self):
@@ -117,7 +119,7 @@ class BenchTests(unittest.TestCase):
         payload={'method':'batch_water','readings_g':[1.,1.01,.99],'density_g_ml':1.,'balance_resolution_g':.01,'doses_per_group':5,'aspirate_steps':45,'chase_steps':300,'sample':1}
         report=analyze_bench_readings(payload)
         self.assertAlmostEqual(.2,report['mean_per_dose_ml'])
-        self.assertEqual(45,report['suggested_aspirate_steps'])
+        self.assertEqual(34,report['suggested_aspirate_steps'])
         self.assertFalse(report['individual_repeatability_verified'])
         self.assertFalse(report['formal_calibration_validated'])
         self.assertEqual(3,report['groups'])
@@ -132,6 +134,13 @@ class BenchTests(unittest.TestCase):
         r=analyze_bench_readings({'method':'bulk_turns','readings_g':[4.5,4.5,4.5],'density_g_ml':1.,'balance_resolution_g':.01,'turns':5})
         self.assertAlmostEqual(.9,r['mean_ml_per_turn'])
         self.assertFalse(r['formal_calibration_validated'])
+    def test_new_015_target_keeps_45_steps_for_075g_groups(self):
+        r=analyze_bench_readings({'method':'batch_water','readings_g':[.75,.75,.75],
+                                'density_g_ml':1.,'doses_per_group':5,'aspirate_steps':45})
+        self.assertAlmostEqual(.15,r['target_ml'])
+        self.assertEqual(45,r['suggested_aspirate_steps'])
+        self.assertEqual(0,r['deviation_percent'])
+        self.assertTrue(r['mean_tuning_within_5_percent'])
     def test_other_fluid_action_invalidates_bench_readiness(self):
         self.ready_bench();self.run_action({'action':'wash'})
         before=len(self.c.hardware.moves)

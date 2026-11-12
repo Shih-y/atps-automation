@@ -4,8 +4,9 @@ Real serial access occurs ONLY in SerialHardware.connect(). pyserial is optional
 until then. No probing, broadcast, factory writes or automatic motion retries.
 8N1 is an initial configuration requiring bench confirmation (see findings).
 The public stop is a software stop request, not a hardwired emergency circuit.
-After stop/fault reconnect is required because an interrupted response cannot
-be associated safely with another request in these protocols.
+Priority stop latches interrupted I/O. A user stop can retain the open handle
+after the old worker exits, stale replies are drained, and idle is queried.
+Failed recovery leaves the fault latch set; no old motion is resumed.
 """
 import copy
 import json
@@ -299,6 +300,30 @@ class SerialHardware:
                     raise
                 raise HardwareError(str(exc)) from exc
 
+    def read_status(self, cancel_event=None):
+        """Explicit refresh, only query frames on success; does not move or select."""
+        def action():
+            steps=self._exchange('pump',self.pump.query_remaining_steps(),cancel_event)
+            turns=self._exchange('pump',self.pump.query_remaining_turns(),cancel_event)
+            self._pump_state(steps);self._pump_state(turns)
+            idle=all(r.status in self.config['pump']['status_ok'] and r.parameter==0 for r in (steps,turns))
+            speed=self._exchange('pump',self.pump.query_speed(),cancel_event);self._pump_state(speed)
+            self._update_telemetry(pump_status='stopped' if idle else 'running',direction=None,flow=None,
+                rpm=0 if idle else speed.parameter/10,remaining=0 if idle else None,unit=None,pump_at=time.time())
+            status=self._exchange('valve',self.valve.query_status(),cancel_event)
+            if is_pending(status.status):
+                self._update_telemetry(valve_status='switching',valve_port=None,target_port=None,valve_at=time.time())
+                self.port=None
+            else:
+                validate_valve_ready(status)
+                position=self._exchange('valve',self.valve.query_position(),cancel_event)
+                validate_valve_ready(position)
+                if not 1<=position.parameter<=16:raise HardwareError('Invalid valve position readback')
+                self.port=position.parameter
+                self._update_telemetry(valve_status='confirmed',valve_port=position.parameter,target_port=None,valve_at=time.time())
+            self._log('manual_status_refreshed',motion_sent=False)
+        return self._perform(action,cancel_event)
+
     def select(self, port, cancel_event=None):
         command = self.valve.select(port)
         def action():
@@ -380,7 +405,8 @@ class SerialHardware:
         """Priority best-effort stop; interrupts reads/polls, then latches session.
 
         Sending a frame does not prove physical stopping. Replies are not reused;
-        close/connect is required. Use independent hardware power isolation if
+        recover_after_stop may clear the latch after the old task exits and fresh idle
+        readback succeeds, without reopening the serial handle. Use independent hardware power isolation if
         a communication failure prevents physical stopping.
         """
         self._stopped.set()
@@ -417,8 +443,27 @@ class SerialHardware:
             if failures:
                 raise HardwareError("stop could not be delivered to all devices: " + "; ".join(failures))
 
+    def recover_after_stop(self):
+        """Called only after the cancelled controller worker has exited. No reopen."""
+        with self._action_lock:
+            with self._stop_lock:
+                if not self.connected:raise HardwareError('Serial connection is not open')
+                for link in {id(v.serial):v for v in self._links.values()}.values():
+                    self._drain_stopped_bus(link)
+                self._stop_sent=False
+                self._stopped.clear()
+        try:
+            self.read_status()
+            state=self.get_telemetry()
+            if state['pump_status']!='stopped' or state['valve_status']!='confirmed':
+                raise HardwareError('Pump/valve stop could not be confirmed')
+            self._log('stop_confirmed_connection_retained',serial_reopened=False)
+        except Exception:
+            self.stop()
+            raise
+
     def _drain_stopped_bus(self, link):
-        """Bounded best-effort drain in a permanently latched session.
+        """Bounded best-effort drain while the session is latched.
 
         Drained bytes are NOT accepted as stop confirmation: an earlier reply may
         have arrived late. A quiet interval reduces reply overlap, but cannot

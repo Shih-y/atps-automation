@@ -110,7 +110,7 @@ class CaptureStore:
         if not isinstance(payload,dict):raise ValueError('全景采集请求必须为JSON对象')
         if not current['batch_id'] or payload.get('batch_id')!=current['batch_id']:raise ValueError('采集批次不存在或已过期')
         if current['discarded'] or current['historical']:raise ValueError('本批次已关闭，只可查看历史图像')
-        if payload.get('alignment_confirmed') is not True:raise ValueError('先确认固定光路和全部目标样品ROI')
+        if not current.get('timing_prerequisites_bypassed') and payload.get('alignment_confirmed') is not True:raise ValueError('先确认固定光路和全部目标样品ROI')
         captured=parse_time(payload.get('captured_at'))
         if captured<parse_time(current['ready_at']) or captured>utc_now()+timedelta(seconds=10):raise ValueError('采集时间早于批次就绪或晚于本机时间；请核对时钟')
         raw=validate_png(payload.get('png_base64'),payload.get('width'),payload.get('height'))
@@ -130,7 +130,7 @@ class CaptureStore:
         filename='F_'+frame_id+'.png'
         received=utc_now()
         elapsed=(received-parse_time(current['mix_stopped_at'])).total_seconds() if current.get('mix_stopped_at') else None
-        frame={'frame_id':frame_id,'filename':filename,'captured_at':captured.isoformat(timespec='milliseconds'),
+        frame={'alignment_confirmed':payload.get('alignment_confirmed') is True,'frame_id':frame_id,'filename':filename,'captured_at':captured.isoformat(timespec='milliseconds'),
                 'received_at':received.isoformat(timespec='milliseconds'),'width':payload['width'],'height':payload['height'],
                 'view_direction':'fixed_front_row','hardware_mode':current['hardware_mode'],
                 'geometry_signature':current.get('geometry_signature'),

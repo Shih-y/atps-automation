@@ -6,7 +6,7 @@
   if (!host) return;
   host.innerHTML = `
     <h2>清水试送与交付量校准</h2>
-    <p>使用现有0.01 g天平。每转出水量已保存，无需重复测量。按<strong>5剂一组、共3组</strong>校正0.20 mL的平均交付量。准备清水、废液容器、可称重的小瓶；15口放清水，16口接清洁空气。</p>
+    <p>使用现有0.01 g天平。每转出水量已保存，无需重复测量。按<strong>5剂一组、共3组</strong>校正0.15 mL的平均交付量。准备清水、废液容器、可称重的小瓶；15口放清水，16口接清洁空气。</p>
     <p class="note">这里可以直接做清水试验，无需先填写母液档案或签核清洗。记录可在连接状态下保存。全程只用清水；水校准结果不能直接作为PEG或其他母液的交付校准。</p>
     <p id="benchStatus" class="statuschecks" aria-live="polite"></p>
     <div class="formblock">
@@ -48,11 +48,11 @@
       </div>
       <div class="row"><label class="field" for="benchAspirateRpm">吸取转速 / rpm<input id="benchAspirateRpm" type="number" min="0.1" max="100" step="0.1" value="5"></label><label class="field" for="benchChaseRpm">追送转速 / rpm<input id="benchChaseRpm" type="number" min="0.1" max="100" step="0.1" value="10"></label></div><p id="benchDosePlan" class="mini timing"></p>
       <div class="actions"><button id="benchTestBtn">只试送1剂清水</button><button id="benchDoseSeenBtn">已看到本次清水进入所选瓶</button></div>
-      <p class="subtle">追送上限3000步，吸取与追送转速均可调0.1—100 rpm，默认5／10 rpm。提高转速不保证一定送达；观察液段到瓶并避免连续鼓泡、飞溅。高转速下步数与实际转数的关系尚未实测，时间仅作估计。每次“只试送1剂”会重新吸水、追送及吹扫，不是补吹上一剂。目标是送达液段，不以吹干管壁水膜为终点。本次仅核对路线和追送是否足够；0.01 g天平的单次0.20 mL读数不用于证明单剂精度。更换样品口、追送步数或转速后需重新试送观察。</p>
+      <p class="subtle">追送上限3000步，吸取与追送转速均可调0.1—100 rpm，默认5／15 rpm。提高转速不保证一定送达；观察液段到瓶并避免连续鼓泡、飞溅。高转速下步数与实际转数的关系尚未实测，时间仅作估计。每次“只试送1剂”会重新吸水、追送及吹扫，不是补吹上一剂。目标是送达液段，不以吹干管壁水膜为终点。本次仅核对路线和追送是否足够；0.01 g天平的单次0.15 mL读数不用于证明单剂精度。更换样品口、追送步数或转速后需重新试送观察。</p>
     </div>
     <div class="formblock">
       <h3>5 · 已保存的入瓶量参考与可选校准</h3><p id="benchSavedDose" class="note statuschecks"></p><details id="doseRecalibration"><summary>可选：重新校准入瓶量（每组5剂，共3组）</summary>
-      <p>倒掉刚才试送的水，空瓶去皮，再把同一支管放回相同位置。每次点击收集一组5剂，目标总量1.00 mL；停泵后称净质量。倒空、去皮后重复，共3组。</p>
+      <p>倒掉刚才试送的水，空瓶去皮，再把同一支管放回相同位置。每次点击收集一组5剂，目标总量0.75 mL（水按1 g/mL约0.75 g）；停泵后称净质量。倒空、去皮后重复，共3组。</p>
       <p id="benchGroupPlan" class="mini timing"></p>
       <div class="actions"><button id="benchAfterDoseAirSeenBtn">上次试送后已无连续水柱，C端无悬滴</button><button id="benchGroupBtn" class="primary">瓶已倒空并去皮，连续试送5剂</button></div>
       <p class="subtle">程序在每剂后用16口空气排出公共管内主体水量，包含最后一剂后；这组纯水试验不在剂间额外用15口水冲洗。样品支管继续沿用，倒空瓶子不会使支管重新成为“首次空管”。</p>
@@ -88,7 +88,7 @@
 
   function reportText(r, method) {
     if (method === 'bulk_turns') return `清水每转出水量：${short(r.mean_ml_per_turn,4)} mL/转。\n已保存3次5转称重记录。已更新默认参考，下次自动沿用。此系数仅适用于C端充水收集；空气液段仍需按下方5剂一组实测。`;
-    return `平均每剂交付：${short(r.mean_per_dose_ml,4)} mL（5剂一组）。${r.deviation_percent==null?'':'目标0.20 mL的均值偏差：'+short(r.deviation_percent,2)+'%。'}\n组间RSD：${r.group_rsd_percent == null ? '尚不能计算' : short(r.group_rsd_percent,2)+'%'}。${r.suggested_aspirate_steps ? '\n下一轮建议吸取：'+r.suggested_aspirate_steps+'步；追送参数保持本轮设置，重新测3组。' : ''}${r.recommendation?'\n'+r.recommendation:''}\n单剂重复性：未验证。母液等效量、残水和交叉污染：未验证。`;
+    return `平均每剂交付：${short(r.mean_per_dose_ml,4)} mL（5剂一组）。${r.deviation_percent==null?'':'目标'+short(r.target_ml??.15,3)+' mL的均值偏差：'+short(r.deviation_percent,2)+'%。'}\n组间RSD：${r.group_rsd_percent == null ? '尚不能计算' : short(r.group_rsd_percent,2)+'%'}。${r.suggested_aspirate_steps ? '\n下一轮建议吸取：'+r.suggested_aspirate_steps+'步；追送参数保持本轮设置，重新测3组。' : ''}${r.recommendation?'\n'+r.recommendation:''}\n单剂重复性：未验证。母液等效量、残水和交叉污染：未验证。`;
   }
 
   async function action(operation, extra={}) {
@@ -149,14 +149,14 @@
     const savedDose=state.water_dose_reference;
     if(savedDose){
       const p=savedDose.parameters;
-      $('benchSavedDose').textContent=`已保存：${savedDose.readings_g.join('、')} g，每组${savedDose.doses_per_group}剂，共${savedDose.groups}组。平均每剂约${short(savedDose.mean_per_dose_ml,4)} mL，偏差${short(savedDose.deviation_percent,2)}%。\n${p?`记录参数：${p.sample}号瓶；吸取${p.aspirate_steps}步／${p.aspirate_rpm??'未记录'} rpm，追送${p.chase_steps??'未记录'}步／${p.chase_rpm??'未记录'} rpm。`:'动作参数尚待确认，未据此改动默认值。'}\n${savedDose.groups<3?'只有1组数据，尚未完成3组验证。':'已记录多组数据，仍不代表每剂都准确。'}清水参考不等于母液定量验证。需要重测时展开下方校准。`;
+      $('benchSavedDose').textContent=savedDose.method==='operator_reported_single_volume'?`当前采用用户实测参考：只试送1剂清水约${short(savedDose.mean_per_dose_ml,3)} mL；5剂目标0.75 mL。\n动作设置：${p.sample}号瓶；吸取${p.aspirate_steps}步／${p.aspirate_rpm} rpm，追送${p.chase_steps}步／${p.chase_rpm} rpm。\n此前5剂1.02 g保留为历史，本次未提供新的分组称重，尚未完成3组验证。可选校准仍可更新该参考。`:`已保存：${savedDose.readings_g.join('、')} g，每组${savedDose.doses_per_group}剂，共${savedDose.groups}组。平均每剂约${short(savedDose.mean_per_dose_ml,4)} mL，偏差${short(savedDose.deviation_percent,2)}%。\n${p?`记录参数：${p.sample}号瓶；吸取${p.aspirate_steps}步／${p.aspirate_rpm??'未记录'} rpm，追送${p.chase_steps??'未记录'}步／${p.chase_rpm??'未记录'} rpm。`:'动作参数尚待确认，未据此改动默认值。'}\n${savedDose.groups<3?'只有1组数据，尚未完成3组验证。':'已记录多组数据，仍不代表每剂都准确。'}清水参考不等于母液定量验证。需要重测时展开下方校准。`;
       if(!savedDoseLoaded){
         if(p&&!state.busy&&!requestBusy)for(const [id,k] of [['benchSample','sample'],['benchAspirateSteps','aspirate_steps'],['benchChaseSteps','chase_steps'],['benchAspirateRpm','aspirate_rpm'],['benchChaseRpm','chase_rpm']])if(p[k]!=null)$(id).value=p[k];
         savedDoseLoaded=true;
       }
     }
     const bulk=state.bulk_water_reference?.report;
-    $('benchBulkReference').textContent=bulk?`已保存净质量：${bulk.readings_g.join('、')} g；每次${bulk.turns}圈。\n平均每圈约 ${short(bulk.mean_ml_per_turn,6)} mL（水密度按${short(bulk.density_g_ml,4)} g/mL）。不用重复称重，可直接做第3步吹扫。仅为C端充水参考，不代表样品瓶端0.20 mL交付已校准。`:'正在读取已保存的充水参考……';
+    $('benchBulkReference').textContent=bulk?`已保存净质量：${bulk.readings_g.join('、')} g；每次${bulk.turns}圈。\n平均每圈约 ${short(bulk.mean_ml_per_turn,6)} mL（水密度按${short(bulk.density_g_ml,4)} g/mL）。不用重复称重，可直接做第3步吹扫。仅为C端充水参考，不代表样品瓶端0.15 mL交付已校准。`:'正在读取已保存的充水参考……';
     const reason=busy?'当前动作尚未结束':!state.connected?'先连接设备':state.pending_plug?'先处理正式流程的待送液段':'';
     const current={sample:Number($('benchSample').value),chase_steps:Number($('benchChaseSteps').value),aspirate_rpm:Number($('benchAspirateRpm').value),chase_rpm:Number($('benchChaseRpm').value)};
     const serverContext=b.delivery_seen_context||(b.delivery_seen_sample!=null?{sample:b.delivery_seen_sample,chase_steps:b.delivery_seen_chase_steps}:null);

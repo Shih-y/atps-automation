@@ -20,6 +20,21 @@ class LiveTelemetryTests(unittest.TestCase):
         self.assertEqual('unknown',t['pump_status'])
         self.assertIsNone(t['valve_port'])
         self.assertEqual([],self.bus.writes)
+    def test_manual_status_refresh_only_queries_and_reports_idle(self):
+        self.bus.devices[1].turn_replies=[(0,0)]
+        self.hw.read_status()
+        self.assertEqual('stopped',self.hw.get_telemetry()['pump_status'])
+        self.assertEqual('confirmed',self.hw.get_telemetry()['valve_status'])
+        self.assertTrue(self.bus.writes)
+        self.assertFalse(any(frame[1]==1 and frame[2] in (0x40,0x41,0x44,0x45,0x49,0x4B) for frame in self.bus.writes))
+    def test_stop_recovery_retains_same_serial_handle(self):
+        self.bus.devices[1].turn_replies=[(0,0)]
+        link=self.hw._links['pump'].serial
+        self.hw.stop();self.hw.recover_after_stop()
+        self.assertIs(link,self.hw._links['pump'].serial)
+        self.assertTrue(self.hw.connected)
+        self.assertFalse(self.hw._stopped.is_set())
+        self.assertEqual('stopped',self.hw.get_telemetry()['pump_status'])
     def test_readbacks_show_both_directions_then_confirmed_stop(self):
         for flow,port,direction in [('aspirate',15,'ccw'),('dispense',1,'cw')]:
             self.hw.select(port)

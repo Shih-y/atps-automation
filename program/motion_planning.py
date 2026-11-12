@@ -44,7 +44,7 @@ def analyze_bench_readings(payload):
             'individual_repeatability_verified':False,'formal_calibration_validated':False,
             'residual_water_ml':None,'carryover_percent':None,
             'scope':'仅清水、当前动作和管路的初步结果；组间离散程度不是单剂重复性。',
-            'notes':['密度1.000为近似输入，非实测密度。','0.01g天平采用5剂一组，不能证明每剂0.20mL的精度。']}
+            'notes':['密度1.000为近似输入，非实测密度。','0.01g天平采用5剂一组，不能证明单剂精度。']}
     if method=='bulk_turns':
         turns=_number(payload.get('turns',5),1,100,'收集圈数',True)
         report.update(turns=turns,mean_ml_per_turn=mean/density/turns,
@@ -53,14 +53,15 @@ def analyze_bench_readings(payload):
         count=_number(payload.get('doses_per_group',5),1,5,'每组剂数',True)
         steps=_number(payload.get('aspirate_steps'),1,100,'当前吸取步数',True)
         dose=mean/density/count
+        target=_number(payload.get('target_ml',.15),.05,.5,'清水单剂目标mL')
         suggestion=None
         if .1<=dose<=.3:
-            proposed=round(steps*.2/dose)
+            proposed=round(steps*target/dose)
             if 1<=proposed<=100:suggestion=proposed
-        report.update(doses_per_group=count,mean_per_dose_ml=dose,
+        report.update(doses_per_group=count,mean_per_dose_ml=dose,target_ml=target,
                       suggested_aspirate_steps=suggestion,current_aspirate_steps=steps,
-                      deviation_percent=100*(dose-.2)/.2,
+                      deviation_percent=100*(dose-target)/target,
                       resolution_bound_per_dose_ml=2*resolution/density/count,
-                      mean_tuning_within_5_percent=abs(dose-.2)<=.01,
+                      mean_tuning_within_5_percent=abs(dose-target)<=target*.05,
                       recommendation='只将建议用于下一组试验；追送步数保持不变。' if suggestion else '出液量异常或偏差过大：先查是否送完、漏气、称重和管口，不自动加大吸取。')
     return report

@@ -1,4 +1,29 @@
-# COM6 单总线实机版 API（本地127.0.0.1）
+# 单总线实机版 API（本地 127.0.0.1，2026-11-12）
+
+## 当前默认：自由调试
+
+`config.free_debug=true` 为当前默认，缺少该键时也采用自由调试。下面这一节描述当前页面实际行为；后面的“历史受校准前提约束的流程”只供 `free_debug=false` 的兼容流程参考，不能用其中的前提条件和旧参数描述当前默认界面。
+
+GET `/api/token` 返回控制 token；POST 必须使用 `Content-Type: application/json` 和 `X-Control-Token`。GET `/api/state` 返回状态，动作 POST 仅表示已接收，仍需轮询 `busy`、`state` 和 `message` 确认结果。
+
+- GET `/api/serial-ports`：枚举串口并提供 CH340 识别结果；不扫描设备地址，不执行运动。
+- POST `/api/connect`：`{}` 按已保存配置连接，也可传 `{port:"COM6"}`。泵 1、阀 2 共用同一串口。页面可自动选择唯一 CH340；没有固定要求 COM5 或 COM6。连接不会转泵或切阀。
+- POST `/api/stop`：取消当前任务、发送停止、等旧任务退出并查询停止状态。确认成功后保持同一串口句柄，返回状态 `STOPPED`、`connected:true`；取消的队列不会续跑。停止确认期间不能启动下一动作。通信或确认失败时保持异常锁定，不能假报停止成功。显式 `/api/disconnect` 才是关闭连接的入口。
+- POST `/api/action`，`{action:"select_port",port:15}`：先停泵再选口并核验，未运行泵。仅允许 1—6、11—16。
+- `{action:"read_status"}`：查询泵剩余步数、剩余圈数、转速及阀状态/位置；成功时只有查询帧。方向无法由这些查询推断。
+- `{action:"manual_motion",port:15,rotation:"ccw",rpm:20,turns:2}`：选口并执行一次原生整数圈数动作。`rotation` 可为 `cw` 或 `ccw`，圈数 1—100，rpm 0.1—100，估算超时为 `max(15,ceil(60*turns/rpm*1.25+10))`，须不超过 120 秒。显式手动入口允许向来源反送或从样品抽取；其他动作仍检查其指定路由。
+- `{action:"volume",source:15,sample:1,volume_ml:0.5}`：按保存的清水参考计算**一次吸取、一次追送**，然后 16 口向 C 端吹扫 15 圈 / 60 rpm。不自动追加样品混合。默认 45 步对应 0.15 mL，即吸取步数 `round(ml*300)`；追送步数 `1000+max(0,吸取步数-45)`。步数、转速和超时须合法，不会暗中分段。`volume_run.actual_ml=null`、`volume_verified=false`，只记录比例估算。
+- 独立吸取、追送、组合加料或最后混合：`{action:"aspirate"|"chase"|"dose"|"bubble",debug_parameters:{source:15,sample:1,aspirate:{steps:45,rpm:5,timeout_s:20},chase:{steps:1000,rpm:15,timeout_s:35},bubble:{steps:20,rpm:5,timeout_s:10}}}`。这四个动作不要求已建立档案或前序观察；`bubble` 只向目标瓶送一次有限气脉冲。页面最后混合按钮使用它。
+- `{action:"run",items:[{debug_parameters:{...},bubble:false}]}`：自由调试队列，每项按给定参数吸取、追送，再 15 口清洗、16 口吹扫；`bubble:true` 才追加该项混合。所有参数在首个动作前检查。此队列与上面的指定毫升按钮是不同入口。
+- `wash`、`purge`、`reset`：分别只执行 15 清洗、16 吹扫、15→16；无需人工观察前提，不把动作完成记为洗净或绝对干燥。
+- `prime` 使用 `{source,pulse}` 单次有限引液；来源批量预充按钮使用管路工作流，所选来源各 6 圈 / 50 rpm 后直接 16 口吹扫，不等待观察弹窗。
+- `prepare_capture` / `capture`：可直接创建图像批次，不以消泡和静置完成作为调试前提。缺失时间仍为 `null`，保存 `timing_prerequisites_bypassed:true`。
+
+快照 `hardware_status` 区分未知、指令中和已读回状态；`selected_port`/`valve_port` 是阀位，泵方向来自已接受的运动指令。停止会把液路状态标记未知，不自动追送或弃液。自由调试只取消流程前提，仍要求真实连接、一次一个动作、有效数值、有限运动及异常停机。校准报告功能保留，默认参考不会被描述成已验证的母液精度。
+
+## 历史受校准前提约束的流程
+
+以下保存早期接口与档案约束说明，仅供兼容模式及历史设计参考；限值以当前代码为准，**不覆盖上节当前默认行为**。
 
 GET /api/token 得到token，POST必须带X-Control-Token及application/json。GET /api/state为完整快照；/api/config是完整配置。POST响应{ok,state}；HTTP错误为{ok:false,error}。异步动作接收后仍须轮询state：FAULT表示动作失败，不能仅看POST 200。
 

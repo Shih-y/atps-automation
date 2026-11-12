@@ -33,7 +33,8 @@ class HTTPTests(unittest.TestCase):
     def test_connect_authenticated_and_stop(self):
         hdr={'X-Control-Token':self.s.token}
         self.assertEqual(200,self.request('/api/connect','POST',{},hdr)[0]); self.assertTrue(self.c.connected)
-        self.assertEqual(200,self.request('/api/stop','POST',{},hdr)[0]); self.assertFalse(self.c.connected)
+        self.assertEqual(200,self.request('/api/stop','POST',{},hdr)[0]); self.assertTrue(self.c.connected)
+        self.assertFalse(self.c.cancel.is_set())
     def test_simulation_mode_is_not_available(self):
         status,raw=self.request('/api/connect','POST',{'mode':'demo'},{'X-Control-Token':self.s.token})
         self.assertEqual(400,status); self.assertIn('仅支持实机',json.loads(raw)['error'])
