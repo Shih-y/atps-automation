@@ -1,5 +1,7 @@
 # 本机运行数据与测试产物
 program/data/
+program/build/
+program/dist/
 **/test_output/
 **/__pycache__/
 *.py[cod]

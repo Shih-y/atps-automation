@@ -76,5 +76,34 @@ node --test tests/phase_analysis.test.js
 ```
 
 浏览器检查见 [测试说明](program/tests/browser/说明.txt)。测试只能使用专用假服务，不能指向实物的8765服务。软件测试不证明实机配液或判相精度。
+```
+
+测试使用隔离目录和假硬件，不打开真实串口。GitHub Actions 在 Windows / Python 3.12 上执行相同测试。
+
+### 构建桌面单文件版
+
+```powershell
+cd program
+python -m pip install -r requirements.txt -r requirements-desktop.txt
+python build_windows.py
+```
+
+输出 `program/dist/ATPS-Automation.exe`（PyInstaller onefile，含网页、默认配置和 pyserial），并打印 SHA256。推送任意 tag 会触发 `.github/workflows/release.yml`：先运行测试，再构建单文件程序，创建 GitHub Release 并上传 exe 与 `SHA256SUMS.txt`。
+
+可选浏览器测试需要 Node.js、Playwright 和标准位置安装的 Microsoft Edge。操作见 [`program/tests/browser/说明.txt`](program/tests/browser/说明.txt)。测试使用专用假服务端口 8879 或随机本地端口，不要将浏览器测试指向控制实物的 8765 服务。
+
+```text
+program/                   程序、网页、默认配置和测试
+  desktop.py               单文件桌面入口（本机服务 + pywebview）
+  build_windows.py         PyInstaller 构建脚本
+  requirements-desktop.txt pywebview / PyInstaller 版本
+  static/                  前端界面
+  tests/                   隔离软件测试
+  vendor/                  随附 pyserial
+  data/                    本机运行后生成，不纳入 Git
+docs/reference/            交付参考文档与图纸
+docs/templates/            空白实验记录表
+.github/workflows/         自动测试与 tag 发布配置
+```
 
 第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。仓库暂未为自有代码指定开源许可证。
