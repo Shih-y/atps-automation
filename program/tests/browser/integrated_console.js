@@ -28,7 +28,7 @@ async function until(fn){for(let i=0;i<100;i++){if(await fn())return;await new P
   check('production server starts disconnected without requesting camera',!(await state()).connected&&await page.evaluate(()=>cameraCalls)===0);
 
   const png=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=1000;c.height=600;const x=c.getContext('2d');x.fillStyle='#aaa';x.fillRect(0,0,c.width,c.height);return c.toDataURL('image/png').split(',')[1];});
-  await page.setInputFiles('#imageFile',{name:'synthetic.png',mimeType:'image/png',buffer:Buffer.from(png,'base64')});
+  await page.getByRole('button',{name:'图像判相与复核',exact:true}).click();await page.setInputFiles('#imageFile',{name:'synthetic.png',mimeType:'image/png',buffer:Buffer.from(png,'base64')});
   await until(async()=>(await page.locator('#cameraStatus').innerText()).includes('本地'));
   await page.locator('#analyzeBtn').click();await page.locator('#captureBtn').click();
   await until(async()=>(await state()).imaging.complete);
@@ -53,7 +53,7 @@ async function until(fn){for(let i=0;i<100;i++){if(await fn())return;await new P
   s=await state();
   check('human label does not overwrite algorithm candidate',s.imaging.records[0].classification_method==='human_review'&&s.imaging.frames.at(-1).analysis.bottles[0].classification==='uncertain');
 
-  await page.locator('#connectBtn').click();await until(async()=>(await state()).connected);
+  await page.getByRole('button',{name:'设备与校准',exact:true}).click();await page.locator('#connectBtn').click();await until(async()=>(await state()).connected);
   for(const [port,ml] of [[15,'.5'],[14,'1'],[13,'.3']])await page.fill('#volume'+port,ml);
   await page.locator('#recipeStart').click();await until(async()=>(await state()).recipe_run?.completed);
   s=await state();

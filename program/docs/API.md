@@ -1,4 +1,34 @@
-# 本地泵阀控制 API（2026-11-13）
+# 本地泵阀与五瓶实验 API（2026-11-14）
+
+新增实验接口采用与下方旧手动接口相同的本地令牌、Host和Origin限制；不提供模拟模式。
+
+## 五瓶质量实验
+
+- GET `/api/lab/state`：母液、标定、项目、样品、瓶位占用、照片任务、模型轮次、相机与调度状态。
+- POST `/api/lab/stock`：`port,name,solute,mass_fraction,batch,temperature_c,density_g_ml,density_evidence`。质量分数用0—1，密度未知用null。10—15分别独立；保存产生新版本，旧实验快照保留。
+- POST `/api/action` 的 `action:"stock_calibration"`：`source,sample,doses,aspirate:{steps,rpm,timeout_s},chase:{steps,rpm,timeout_s}`。样品端收集1—20剂；组内不混合/清洗/吹扫，组末16口吹扫一次。不能当作实际交付已测得。
+- POST `/api/lab/calibration`：`source,groups_g,doses_per_group,aspirate_steps,aspirate_rpm,chase_steps,chase_rpm,note`。保存端点称重原始数据、质量/步估计、来源版本、温度、管路签名；不是旧清水参考。单段步数不超出该次标定点；组间RSD不是单剂RSD。
+- POST `/api/lab/project`：`name,salt_port,temperature_c,total_mass_g,safe_mass_limit_g,photo_offsets_s,min_settle_s,max_observe_s`。默认总质量1g、25°C，拍照60/180/300/600s；保存母液与标定快照。换条件后新建项目。
+- POST `/api/lab/preview`：`project_id,peg_fraction,salt_fraction,total_mass_g`，返回`preview`，含目标/母液质量、可执行性问题、整数步估计及全部动作。无项目也可带完整条件预览。质量分数不是体积比。
+- POST `/api/lab/enqueue`：`project_id,recipes:[{peg_fraction,salt_fraction,total_mass_g,replicates}]`；仅自动瓶1—5，超过空瓶数保留排队等待瓶位。6口只用于旧手动入口。
+- POST `/api/lab/start`、`pause`、`stop`：开始自动批次、暂停后续瓶、立即停止保留连接。每次派发重新核对条件；中断配方不自动重做。
+- POST `/api/lab/release`：`bottle,confirmed_empty:true`；人已换干净空瓶才释放，管路排液不能代替这一动作。
+
+单瓶内部动作 `experiment_recipe` 只允许调度器使用；外部 `/api/action` 禁止直接提交已编译计划。每个有限泵动作后持久化进度。重启恢复记录和占用，调度关闭，运动中样品标为中断。
+
+## 实验照片、复核、选点与导出
+
+- POST `/api/lab/camera`：`ready,rois,width,height` 心跳；五瓶ROI编号1—5，保存映射版本，需实时相机。浏览器关闭/系统休眠会漏拍或迟拍，使用实际时间记录。
+- GET state中的`photo_jobs`给出`job_id`对应的记录`id`、`sample_id,bottle,due_at,status,mapping_version`，due_at为UTC Unix秒。
+- POST `/api/lab/capture`：`job_id,png_base64,analysis,captured_at,mapping_version`。PNG裸base64，时间带时区，分析validated:false且ROI完全一致；可在另一个瓶配液时存图。任务重复提交幂等，不重新配液。
+- POST `/api/lab/retry_photo`：`job_id`；保留原任务并建立当前映射版本的替代任务，重复点击返回同一替代任务。只补图，实际静置时间继续累积。
+- POST `/api/lab/review`：`sample_id,frame_id,classification:"single"|"two_phase"|"uncertain",clear,note`；照片必须属于该样品。保留历次复核记录，训练前重新核对状态、世代、等待时长、排除原因。
+- POST `/api/lab/exclude`：`sample_id,reason`，原因不能空白。
+- POST `/api/lab/suggest`：`project_id,method:"active"|"uniform",count,peg_min,peg_max,salt_min,salt_max,step`；范围/步长用0—1。返回`round`包含训练证据快照、模型分数网格和候选理由。第一版为RBF加权启发式，非经验证概率或物理模型。
+- POST `/api/lab/approve`：`round_id,indices:[0,1]`，人工审核后入队；避免跨轮静默重复，独立重复可从实验设计明确加入。
+- GET `/api/lab/image/{image_id}` 获取登记原图。GET `/api/lab/export?project_id=...` 导出ZIP：JSON、CSV、原图及HTML报告；不含串口凭据，不上传实验数据。
+
+下文为保留的手动mL调试和旧独立图像接口；自动质量实验使用上方接口。
 
 当前页面使用 `free_debug=true`。取消的是前序观察、校准档案及步骤顺序的按钮门槛；仍需有效参数、真实连接和单一串口任务。不会将重复点击排队。旧清水组合试验 `tubes/water_recipe`、自由调试 `run` 已停用。`free_debug=false` 是历史兼容模式，不是当前页面操作方式。
 
@@ -43,7 +73,7 @@ POST `/api/action`：
 
 | action / operation | 参数与动作 |
 |---|---|
-| `select_port` | `{port:15}`，仅停泵、切阀并核验，允许1—6、11—16 |
+| `select_port` | `{port:15}`，仅停泵、切阀并核验，允许1—6、10—16 |
 | `read_status` | 查询泵与阀，不转泵或切阀 |
 | `manual_motion` | `{port:15,rotation:"ccw",rpm:20,turns:2}`；`cw/ccw`，整数圈1—100，rpm0.1—100，动作超时≤120秒；完整配置上限同样生效 |
 | `wash` / `purge` / `reset` | 分别15清水、16空气、15→16；wash默认16圈/50rpm，purge默认15圈/60rpm |

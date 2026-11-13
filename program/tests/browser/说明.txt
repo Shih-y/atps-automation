@@ -17,3 +17,9 @@
 后端回归：python -m unittest discover -s tests -v，使用隔离硬件替身和随机回环端口。
 
 run_free_debug.js、free_debug.js、ch340.js、workflow.js、bench.js为旧页面历史测试，保留供查阅，不作为当前默认页面的验收入口。
+2026-11-14 新增实验测试：
+experiment_console.js：六页假HTTP完整流程与跨项目候选回归。
+experiment_live_frame.js：启动专用8879假硬件服务，以canvas.captureStream提供合成视频，
+验证实时取帧桥、五瓶映射、两瓶独立定时成像与真实HTTP存档。不请求实际摄像头。
+通过 PLAYWRIGHT_MODULE 指定Playwright包；PYTHON指定Python解释器；EDGE_PATH可覆盖Edge路径。
+这些测试与integrated_console.js串行运行，不能同时占用8879，更不能指向实物8765。

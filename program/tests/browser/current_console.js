@@ -83,7 +83,7 @@ const last = endpoint => requests.filter(r=>r.url===endpoint).at(-1)?.body;
  state.hardware_status={pump_status:'stop_requested',pump_at:Date.now()/1000,valve_status:'unknown'};await page.waitForTimeout(900);
  check('requested stop never displayed as confirmed', (await page.locator('#pumpStatus').innerText()).includes('未确认'));
  const png=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=1000;c.height=600;const x=c.getContext('2d');x.fillStyle='#aaa';x.fillRect(0,0,1000,600);return c.toDataURL().split(',')[1];});
- await page.setInputFiles('#imageFile',{name:'synthetic-empty.png',mimeType:'image/png',buffer:Buffer.from(png,'base64')});await until(async()=>(await page.locator('#cameraStatus').innerText()).includes('本地'));
+ await page.getByRole('button',{name:'图像判相与复核',exact:true}).click();await page.setInputFiles('#imageFile',{name:'synthetic-empty.png',mimeType:'image/png',buffer:Buffer.from(png,'base64')});await until(async()=>(await page.locator('#cameraStatus').innerText()).includes('本地'));
  await page.locator('#analyzeBtn').click();await page.waitForTimeout(150);
  check('empty synthetic image remains uncertain without invented bottles',(await page.locator('#analysisSummary').innerText()).includes('不确定')&&await page.locator('#analysisRows tr').count()===0);
  await page.locator('#roiPanel summary').click();await page.locator('#manualRoisBtn').click();await page.locator('#analyzeBtn').click();await page.waitForTimeout(150);

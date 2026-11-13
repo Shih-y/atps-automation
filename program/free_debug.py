@@ -6,6 +6,27 @@ from capture_store import timestamp
 from tube_workflows import AIR
 
 class FreeDebugMixin:
+    def _stock_calibration_plan(self,payload):
+        from controller import number,pulse_checked
+        source=number(payload.get('source'),10,15,'标定来源口',True)
+        sample=number(payload.get('sample'),1,6,'称重收集瓶',True)
+        count=number(payload.get('doses',5),1,20,'本组剂数',True)
+        parameters={key:pulse_checked(payload.get(key)) for key in ('aspirate','chase')}
+        for p in parameters.values():
+            if 'steps' not in p:raise ValueError('来源质量标定使用步数')
+            number(p['rpm'],.1,self.config['pump']['max_rpm'],'配置允许转速')
+            if p['timeout_s']<p['steps']*.3/p['rpm']+2:raise ValueError('超时不足以完成本次标定动作')
+        purge=pulse_checked(AIR)
+        number(purge['rpm'],.1,self.config['pump']['max_rpm'],'配置允许吹扫转速')
+        row=dict(source=source,sample=sample,chunks=[parameters['aspirate']['steps']]*count,
+                 parameters=[dict(source=source,sample=sample,**copy.deepcopy(parameters)) for _ in range(count)],
+                 completed=False,completed_plugs=0,actual_ml=None)
+        return dict(sample=sample,items=[row],total_plugs=count,completed_plugs=0,
+                    total_commands=2*count+1,completed_commands=0,current=None,mix_after=False,purge_after=True,
+                    mixing=None,purge=purge,mixing_performed=False,purge_performed=False,
+                    completed=False,cancelled=False,started_at=timestamp(),actual_ml=None,volume_verified=False,
+                    uncertainty_note='来源质量交付标定收集动作；实测称量尚未录入',method='sample_endpoint_group_mass')
+
     @property
     def free_debug(self):
         return self.config.get('free_debug',True) is True
@@ -18,7 +39,7 @@ class FreeDebugMixin:
                aspirate=value.get('aspirate',dict(steps=45,rpm=5,timeout_s=20)),
                chase=value.get('chase',dict(steps=1000,rpm=15,timeout_s=35)),
                bubble=value.get('bubble',dict(steps=20,rpm=5,timeout_s=10)))
-        number(p['source'],11,15,'来源口',True);number(p['sample'],1,6,'样品口',True)
+        number(p['source'],10,15,'来源口',True);number(p['sample'],1,6,'样品口',True)
         for key in ('aspirate','chase','bubble'):p[key]=pulse_checked(p[key])
         return p
 
@@ -35,7 +56,7 @@ class FreeDebugMixin:
 
     def _volume_plan(self,payload):
         from controller import number,pulse_checked
-        source=number(payload.get('source'),11,15,'来源口',True)
+        source=number(payload.get('source'),10,15,'来源口',True)
         sample=number(payload.get('sample'),1,6,'样品口',True)
         ml=number(payload.get('volume_ml'),.001,10,'本次体积mL（10 mL瓶，需自行扣除已有液体）')
         ref=self.water_dose_reference;refp=ref.get('parameters',{})
@@ -105,9 +126,10 @@ class FreeDebugMixin:
                         plan['current']=dict(item_index=item_index,chunk_index=chunk_index,phase=phase)
                         self._pulse(port,direction,p[phase]);plan['completed_commands']+=1
                         self.common='stock' if phase=='aspirate' else 'wet'
+                        self._lab_event('progress',plan=plan)
                     row['completed_plugs']+=1;plan['completed_plugs']+=1
                     self.samples[str(plan['sample'])].update(condition='unknown',uncertain_delivery=True,
-                        uncertainty_note='按清水参考换算的配方，实际母液交付量未验证',last_gas_stop=timestamp(),clear_at=None,settle_s=None,
+                        uncertainty_note=plan.get('uncertainty_note','按清水参考换算的配方，实际母液交付量未验证'),last_gas_stop=timestamp(),clear_at=None,settle_s=None,
                         timing_basis='server_confirmed_finite_command_completion')
                 row.update(completed=True,finished_at=timestamp())
             if plan['mix_after']:
@@ -115,10 +137,12 @@ class FreeDebugMixin:
                 self._pulse(plan['sample'],'dispense',plan['mixing']);plan['completed_commands']+=1
                 plan.update(mixing_performed=True,mixing_finished_at=timestamp())
                 self.samples[str(plan['sample'])].update(last_gas_stop=plan['mixing_finished_at'],clear_at=None,settle_s=None)
+                self._lab_event('progress',plan=plan)
             if plan['purge_after']:
                 plan['current']=dict(item_index=None,chunk_index=None,phase='purge')
                 self._pulse(16,'aspirate',plan['purge']);plan['completed_commands']+=1
                 plan['purge_performed']=True;self.common='air_unverified'
+                self._lab_event('progress',plan=plan)
             self._check()
             plan.update(completed=True,current=None,finished_at=timestamp())
             self.log('recipe_completed',plan=copy.deepcopy(plan))
@@ -130,7 +154,7 @@ class FreeDebugMixin:
     def _free_action(self,payload):
         from controller import number,pulse_checked
         action=payload['action']
-        supported={'manual_motion','read_status','volume','recipe','aspirate','chase','dose','bubble','run','prime','wash','purge','reset','discard_loaded','new_samples','confirm_reset','clear','magnetic_stop','prepare_capture','capture'}
+        supported={'manual_motion','read_status','volume','recipe','stock_calibration','aspirate','chase','dose','bubble','run','prime','wash','purge','reset','discard_loaded','new_samples','confirm_reset','clear','magnetic_stop','prepare_capture','capture'}
         if action not in supported:return False
         # Validate the complete recipe before the first physical action.
         p=None
@@ -148,13 +172,16 @@ class FreeDebugMixin:
             self.recipe_run=None;self.volume_run=None
             recipe_payload=payload if action=='recipe' else dict(payload,items=[dict(source=payload.get('source'),volume_ml=payload.get('volume_ml'))],mix_after=payload.get('mix_after',False))
             plan=self._recipe_plan(recipe_payload)
+        if action=='stock_calibration':
+            self.recipe_run=None;self.volume_run=None
+            plan=self._stock_calibration_plan(payload)
         if action in ('aspirate','chase','dose','bubble'):p=self._debug_parameters(payload)
         if action=='run':
             raise ValueError('旧调试队列已停用；请使用recipe单瓶配方，所有组分完成后统一混合和吹扫')
         if action in ('wash','purge','reset','discard_loaded'):
             for key in ('wash','purge'):pulse_checked(self.config['reset'][key])
         if action=='prime':
-            number(payload.get('source'),11,15,'来源口',True);pulse_checked(payload.get('pulse'))
+            number(payload.get('source'),10,15,'来源口',True);pulse_checked(payload.get('pulse'))
         self.pending_plug=None;self.current_delivery=None;self.reset_sequence=None
         self.bench.update(water_ready=False,air_ready=False,delivery_seen=False,delivery_seen_context=None,last_run=None)
         self._reset_tubes()
@@ -162,7 +189,7 @@ class FreeDebugMixin:
         if action=='manual_motion':
             self._pulse(payload.get('port'),flow,p,manual_direction=True)
             self.common='unknown'
-        elif action in ('volume','recipe'):
+        elif action in ('volume','recipe','stock_calibration'):
             if action=='volume':self.volume_run=plan['items'][0]
             self._execute_recipe(plan)
             if action=='volume':self.volume_run['mixing_performed']=plan['mixing_performed']

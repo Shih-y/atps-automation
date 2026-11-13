@@ -1,7 +1,7 @@
 'use strict';
 (() => {
   const $ = id => document.getElementById(id);
-  const samples = [1,2,3,4,5,6], sources = [11,12,13,14,15];
+  const samples = [1,2,3,4,5,6], sources = [10,11,12,13,14,15];
   let state = {}, token = '', requesting = false, polling = false, initialized = false, epoch = 0;
   let calibrationBinding = null, stream = null, cameraGeneration = 0, cameraOpening = false;
   let frame = null, capturedAt = null, frameOrigin = null, loadedAt = null, rois = [], manualRois = false, analysis = null, previous = null, batchId = null;
@@ -250,4 +250,4 @@
   window.addEventListener('pagehide',closeCamera);
   preview();
   (async()=>{try{const data=await api('/api/token');token=data.token;await poll();await scanPorts();}catch(e){notice(e.message,true);}setInterval(poll,800);})();
-})();
+window.ATPSCamera={status(){const v=$('cameraVideo');const ready=!!stream&&v.readyState>=2&&!v.paused&&frameOrigin==='camera'&&frame&&frame.width===v.videoWidth&&frame.height===v.videoHeight&&rois.length===5;return {ready,rois:ready?rois.map(r=>({...r})):[],width:ready?v.videoWidth:0,height:ready?v.videoHeight:0};},capture(){const v=$('cameraVideo');if(!this.status().ready)throw Error('实时相机离线');const c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(v,0,0);return {...this.status(),png_base64:c.toDataURL('image/png').split(',')[1],captured_at:new Date().toISOString(),analysis:window.PhaseAnalysis.analyzeFrame(x.getImageData(0,0,c.width,c.height),{rois})};}};})();

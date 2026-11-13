@@ -87,7 +87,7 @@ class TubeMixin:
         if op=='water_recipe':raise ValueError('旧清水组合配方已停用；请使用recipe单瓶配方')
         if op not in ('refill','purge','drain_sources','drain_samples','finish'):
             raise ValueError('未知管路维护步骤')
-        selected=ports(payload.get('sources'),range(11,16),'来源口') if op in ('refill','drain_sources','finish') else []
+        selected=ports(payload.get('sources'),range(10,16),'来源口') if op in ('refill','drain_sources','finish') else []
         samples=ports(payload.get('samples'),range(1,7),'样品口') if op in ('drain_samples','finish') else []
         self.bench.update(water_ready=False,air_ready=False,delivery_seen=False,delivery_seen_context=None,last_run=None)
         self.reset_sequence=None; self.current_delivery=None

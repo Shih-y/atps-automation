@@ -43,7 +43,7 @@ class AirControllerTest(unittest.TestCase):
     def test_ABC_91cm_and_all_sources80cm(self):
         g=self.c.config['geometry']; self.assertEqual((10,10,71),(g['A_cm'],g['B_cm'],g['C_cm']))
         self.assertEqual(91,g['A_cm']+g['B_cm']+g['C_cm'])
-        self.assertEqual({str(i):80 for i in range(11,16)},g['source_cm'])
+        self.assertEqual({str(i):80 for i in range(10,16)},g['source_cm'])
         self.assertEqual({str(i):50 for i in range(1,7)},g['sample_cm'])
         self.run_action({'action':'reset'})
         self.assertEqual([15,16],[m['port'] for m in self.c.hardware.moves]); self.assertTrue(self.c.sources['15']['primed'])

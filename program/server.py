@@ -8,7 +8,7 @@ import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qs
 
 from controller import Controller
 from capture_store import MAX_REQUEST_BYTES
@@ -28,12 +28,27 @@ class Server(ThreadingHTTPServer):
         self.controller=controller; self.token=secrets.token_urlsafe(32)
         self.static=Path(__file__).with_name('static')
         super().__init__(address,Handler)
+        try:
+            from experiment_service import ExperimentService
+            self.lab=ExperimentService(controller)
+            controller.lab=self.lab
+        except Exception:
+            super().server_close()
+            raise
+
+    def server_close(self):
+        lab=getattr(self,'lab',None)
+        if lab:
+            lab.close()
+            if getattr(self.controller,'lab',None) is lab:self.controller.lab=None
+        super().server_close()
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self,*args): pass
-    def reply(self,value,status=200,mime='application/json; charset=utf-8'):
+    def reply(self,value,status=200,mime='application/json; charset=utf-8',filename=None):
         raw=value if isinstance(value,bytes) else json.dumps(value,ensure_ascii=False,allow_nan=False).encode()
         self.send_response(status); self.send_header('Content-Type',mime); self.send_header('Content-Length',str(len(raw)))
+        if filename:self.send_header('Content-Disposition',f'attachment; filename="{filename}"')
         self.send_header('Cache-Control','no-store'); self.send_header('X-Content-Type-Options','nosniff')
         self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'")
         self.end_headers(); self.wfile.write(raw)
@@ -54,12 +69,20 @@ class Handler(BaseHTTPRequestHandler):
             if path=='/api/state': return self.reply(c.snapshot())
             if path=='/api/config': return self.reply(c.snapshot()['config'])
             if path=='/api/serial-ports': return self.reply(scan_serial_ports())
+            if path=='/api/lab/state':return self.reply(self.server.lab.snapshot())
+            if path=='/api/lab/export':
+                project_id=parse_qs(urlsplit(self.path).query).get('project_id',[None])[0]
+                return self.reply(self.server.lab.export_zip(project_id),mime='application/zip',filename='ATPS-experiment-export.zip')
+            if path.startswith('/api/lab/image/'):
+                image_id=path.removeprefix('/api/lab/image/')
+                if '/' in image_id or '%' in image_id or '..' in image_id:raise ValueError('图像ID无效')
+                return self.reply(self.server.lab.image_path(image_id).read_bytes(),mime='image/png')
             if path.startswith('/api/images/'):
                 parts=path.split('/')
                 if len(parts)!=5: raise ValueError('图片路径无效')
                 return self.reply(c.capture.image_path(parts[3],parts[4]).read_bytes(),mime='image/png')
             if path in ('/','/index.html'): return self.reply((self.server.static/'index.html').read_bytes(),mime='text/html; charset=utf-8')
-            if path in ('/app.js','/bench.js','/live.js','/tubes.js','/free.js','/style.css','/console.js','/console.css','/phase_analysis.js'):
+            if path in ('/app.js','/bench.js','/live.js','/tubes.js','/free.js','/style.css','/console.js','/console.css','/phase_analysis.js','/lab.js','/lab.css'):
                 mime='text/javascript; charset=utf-8' if path.endswith('.js') else 'text/css; charset=utf-8'
                 return self.reply((self.server.static/path[1:]).read_bytes(),mime=mime)
             return self.reply({'ok':False,'error':'未找到'},404)
@@ -81,15 +104,20 @@ class Handler(BaseHTTPRequestHandler):
             body=json.loads(raw,parse_constant=no_constant)
             if not isinstance(body,dict): raise ValueError('请求须为对象')
             c=self.server.controller; path=urlsplit(self.path).path
+            if path.startswith('/api/lab/'):
+                return self.reply(self.server.lab.handle(path.removeprefix('/api/lab/'),body))
             if path=='/api/connect': c.connect(body.get('mode','real'),body.get('pump_port',body.get('port','')),body.get('valve_port',body.get('port','')),auto_detect=body.get('auto_detect',False))
-            elif path=='/api/disconnect': c.disconnect()
-            elif path=='/api/stop': c.stop_keep_connection() if c.free_debug else c.stop()
+            elif path=='/api/disconnect':
+                self.server.lab.handle('pause',{});c.disconnect()
+            elif path=='/api/stop': self.server.lab.handle('stop',{})
             elif path=='/api/config': c.configure(body.get('config'))
             elif path=='/api/calibration/report': return self.reply(c.calibration_report(body))
             elif path=='/api/bench/report': return self.reply(c.bench_report(body))
             elif path=='/api/reference': return self.reply(c.update_dose_reference(body))
             elif path=='/api/imaging/begin': return self.reply(c.begin_imaging(body))
-            elif path=='/api/action': c.start(body)
+            elif path=='/api/action':
+                if body.get('action')=='experiment_recipe':raise ValueError('自动实验只能从已编译的实验队列启动')
+                c.start(body)
             elif path=='/api/ack': c.acknowledge(body)
             elif path=='/api/capture': return self.reply(c.capture_frame(body))
             elif path=='/api/label': c.label(body)
