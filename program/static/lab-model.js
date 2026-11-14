@@ -101,6 +101,12 @@ window.ATPSLabPages.model = (ctx, page) => {
       '比较主动学习和均匀取点时，应使用相同体系、条件、预算和独立评价数据。此表仅记录轮次；候选图不能证明准确率提高。',
     );
   const comparisonTable = ctx.node('div', null, comparison);
+  const continuationCard = ctx.card(
+    page,
+    '同瓶研究的冻结轮次',
+    '每次补加保存起始物料版本、采用组成、动作与选点理由。双相邻域探索不测两相具体组成或系线；父观测标签不覆盖子观测。',
+  );
+  const continuationRounds = ctx.node('div', null, continuationCard, { id: 'continuation-rounds' });
   function candidateCoordinates(candidate) {
     if (Object.hasOwn(candidate, 'composition')) return candidate.composition || {};
     return {
@@ -260,6 +266,43 @@ window.ATPSLabPages.model = (ctx, page) => {
   };
   return {
     render() {
+      ctx.table(
+        continuationRounds,
+        [
+          '研究 / 次数',
+          '瓶位',
+          '新观测 / 父观测',
+          '最终估计PEG / 盐',
+          '补加质量 / g',
+          '选择理由',
+          '轮次状态',
+        ],
+        ctx.continuationRuns().flatMap((run) =>
+          (run.rounds || []).map((r, index) => {
+            const c = r.candidate || {},
+              sample = (ctx.state.samples || []).find((s) => s.id === r.sample_id),
+              composition = c.composition || sample?.composition || {};
+            return [
+              run.id.slice(0, 8) + ' / ' + (index + 1),
+              c.bottle ?? c.planned_bottle ?? sample?.bottle,
+              `${r.sample_id?.slice(0, 8) || '未建立'} / ${sample?.parent_sample_id?.slice(0, 8) || '起点'}`,
+              ctx.fraction(composition.peg_fraction) +
+                ' / ' +
+                ctx.fraction(composition.salt_fraction),
+              ctx.mass(r.charged_mass_g ?? c.added_mass_g),
+              ctx.selectionReason(c.reason || r.reason),
+              {
+                claimed: '已冻结并占用预算',
+                completed: '已完成',
+                interrupted: '中断',
+                preparing: '执行中',
+              }[r.status] ||
+                r.status ||
+                '已冻结',
+            ];
+          }),
+        ),
+      );
       const scoped = (ctx.state.rounds || []).filter((r) => r.project_id === ctx.projectId);
       ctx.options(
         rounds,

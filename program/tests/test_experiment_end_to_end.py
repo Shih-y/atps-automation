@@ -28,6 +28,8 @@ class ClosedLoopTests(unittest.TestCase):
         self.p=self.lab.handle('project',dict(name='synthetic test',salt_port=13,total_mass_g=.15,
             safe_mass_limit_g=1,temperature_c=25,photo_offsets_s=[0],min_settle_s=0,max_observe_s=1800))['project']
         self.rois=[dict(sample=i,x=(5-i)*20,y=0,width=20,height=40) for i in range(1,6)]
+        for bottle in range(1,6):
+            self.lab.handle('release',dict(bottle=bottle,confirmed_empty=True))
         self.heartbeat()
     def tearDown(self):
         self.lab.handle('pause',{})

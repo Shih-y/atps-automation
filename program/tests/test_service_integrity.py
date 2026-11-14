@@ -348,7 +348,7 @@ class IntegrityTests(unittest.TestCase):
         with closing(sqlite3.connect(backups[0])) as backup:
             previous=json.loads(backup.execute('SELECT body FROM state WHERE id=1').fetchone()[0])
             self.assertNotIn('schema_version',previous)
-        self.assertEqual(2,self.s.data['schema_version'])
+        self.assertEqual(3,self.s.data['schema_version'])
 
 
 if __name__=='__main__':unittest.main()

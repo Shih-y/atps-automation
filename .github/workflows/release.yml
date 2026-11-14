@@ -36,10 +36,10 @@ jobs:
         run: npm install --no-save playwright@1.62.1
       - name: Interface and synthetic video regression
         run: |
-          node tests/browser/experiment_console.js
-          node tests/browser/current_console.js
-          node tests/browser/integrated_console.js
-          node tests/browser/experiment_live_frame.js
+          foreach ($testScript in @('experiment_console.js','continuation_console.js','current_console.js','integrated_console.js','experiment_live_frame.js','continuation_live_frame.js')) {
+            node "tests/browser/$testScript"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - name: Build one-file desktop executable
         run: python build_windows.py
       - name: Packaged desktop smoke test
@@ -54,7 +54,7 @@ jobs:
           Copy-Item 'dist/ATPS-Automation.exe' $asset
           Copy-Item 'dist/ATPS-Automation.exe.config' "$asset.config"
           $bundle = "ATPS-Automation-$tag-windows.zip"
-          Compress-Archive -Path 'dist/ATPS-Automation.exe','dist/ATPS-Automation.exe.config','build_info.json','../docs/五瓶自动实验操作说明.txt','../docs/2026-11-14_修复与验收说明.txt' -DestinationPath $bundle
+          Compress-Archive -Path 'dist/ATPS-Automation.exe','dist/ATPS-Automation.exe.config','build_info.json','../docs/五瓶自动实验操作说明.txt','../docs/2026-11-14_修复与验收说明.txt','../docs/同瓶补加与自动研究操作说明.txt','../docs/母液浓度与密度核查.txt' -DestinationPath $bundle
           @($asset,"$asset.config",$bundle,'build_info.json') | ForEach-Object { "$((Get-FileHash $_ -Algorithm SHA256).Hash.ToLowerInvariant())  $_" } | Set-Content -Encoding ascii SHA256SUMS.txt
           "Source commit: $env:GITHUB_SHA`nWindows tests, optical regression, browser and desktop smoke checks completed.`nHardware dosing and phase accuracy require experimental validation." | Set-Content -Encoding utf8 RELEASE_NOTES.txt
           "RELEASE_ASSET=$asset" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV

@@ -127,3 +127,25 @@ POST `/api/bench/report` 提交 `method:"batch_water"`、3组 `readings_g`、`do
 5. POST `/api/discard {batch_id}` 明确放弃未完成批次；GET `/api/images/{batch_id}/{filename}` 获取登记原图。
 
 存档包含原图、真实ROI、算法方法与候选、拍摄/加载/接收时间、缺失定位、每瓶混合停气时间及人工复核。没有可用时间时记录null，不声称已消泡、已稳定、30秒判相或算法达到特定准确率。
+
+## 同瓶研究与累计质量（v2026.11.14.1）
+
+以下是六页实验接口，沿用令牌、JSON错误与 `request_id` 幂等规则；**不要与旧 `/api/action` 的mL调试参考混用**。浓度字段均为0—1质量分数，所有物料质量单位g。
+
+| POST接口 | 请求/用途 |
+|---|---|
+| `/api/lab/continuation_preview` | `{project_id,bottle,peg_fraction,salt_fraction}`；只预览该瓶的补加，不运动 |
+| `/api/lab/continuation_run` | `{project_id,bottles,peg_min,peg_max,salt_min,salt_max,step,round_budget,added_mass_budget_g,time_budget_s,objective,request_id}`；仅建立研究设置 |
+| `/api/lab/continuation_start` | `{run_id,request_id}`；明确启动新研究 |
+| `/api/lab/continuation_pause` | `{run_id,request_id}`；暂停后续补加，当前有限动作照常完成 |
+| `/api/lab/continuation_resume` | `{run_id,request_id}`；显式恢复已暂停研究，中断/重启任务不能自动重放 |
+
+`objective` 为 `boundary` 或 `two_phase_neighborhood`。后者仅探索双相邻域，不测系线。时间预算从首次启动计算，包含人工等待和暂停；动作耗时是工程估计。每轮先验证瓶内物料及可达性，再比较启发式选点分数。
+
+预览返回 `kind=continuation`、`initial_inventory`、`inventory_key`、最终 `target`、`theoretical_additions_g`、仅补加的 `plan.items`、最终累计 `estimated`、`added_mass_g`、`estimated_duration_s`、`composition`、`issues`。同样动作从不同初始库存出发不代表同一终点；执行前核对库存版本。
+
+GET `/api/lab/state` 包含 `bottles[].inventory`、`continuation_runs`、样品 `parent_sample_id/lineage_root_id` 及 `density_audit`。质量记录来自完整有限动作与适用标定，不是实测交付。中断/物料不明不能定量续加。
+
+`/api/lab/stock` 支持 `reagent_form=as_configured|anhydrous|dihydrate`。二水合物仅适用于10口 `solute=sodium_citrate`；传入 `reagent_mass_fraction`，后端按258.06/294.10计算有效 `mass_fraction`，保留两个值和换算依据。旧项目快照不改写。
+
+可选密度字段 `density_basis=unknown|measured|reference|legacy_unverified`，非空密度需依据；实测/参考需填写 `density_temperature_c`、有效溶质的 `density_mass_fraction`、`density_batch`。只有批次、温度、浓度匹配的实测密度可用于体积称量转质量。直接 `groups_g` 标定无需密度。

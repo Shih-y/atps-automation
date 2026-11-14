@@ -58,7 +58,7 @@ async function closeNativeWindow(){
   execFileSync(process.env.PYTHON||'python',[path.join(__dirname,'desktop_legacy_fixture.py'),data],{windowsHide:true,stdio:'pipe'});
   ({context,page,port}=await launch());
   const migrated=await(await context.request.get(`http://127.0.0.1:${port}/api/lab/state`)).json();
-  assert.equal(migrated.schema_version,2);assert.equal(migrated.running,false);
+  assert.equal(migrated.schema_version,3);assert.equal(migrated.running,false);
   assert.equal(migrated.samples[0].execution_state,'interrupted');assert.equal(migrated.samples[0].training_eligibility.eligible,false);
   assert(fs.readdirSync(path.join(data,'experiments','backups')).some(n=>n.startsWith('before-schema-')));
   const restarted=await(await context.request.get(`http://127.0.0.1:${port}/api/state`)).json();assert.equal(restarted.connected,false);assert.equal(restarted.busy,false);

@@ -36,6 +36,9 @@ async function waitFor(fn){for(let n=0;n<150;n++){if(await fn())return;await new
   for(const [name,value] of Object.entries({name:'SYNTHETIC TEST ONLY',total_mass_g:'.15',safe_mass_limit_g:'1',photo_offsets_s:'0',min_settle_s:'0',max_observe_s:'60',composition_tolerance:'1'}))await page.locator('#project-form [name='+name+']').fill(value);
   await page.locator('#project-form button[type=submit]').click();await waitFor(async()=>(await state()).projects.length===1);
   const project=(await state()).projects[0];assert.equal(project.composition_tolerance_fraction,.01);
+  // Test operator explicitly confirms clean empty vials before the first dose.
+  // This is setup evidence, not inferred from a disconnected/unused bottle slot.
+  for(const bottle of [1,2])await post('/api/lab/release',{bottle,confirmed_empty:true});
   for(const [name,value] of Object.entries({peg:'4',salt:'4',mass:'.15',replicates:'2'}))await page.locator('#composition-form [name='+name+']').fill(value);
   await page.locator('#composition-form button[type=submit]').click();await page.waitForFunction(()=>document.querySelector('#lab-message').textContent.includes('可加入队列'));
   await page.locator('#enqueue-preview').click();await waitFor(async()=>(await state()).samples.length===2);
@@ -51,6 +54,41 @@ async function waitFor(fn){for(let n=0;n<150;n++){if(await fn())return;await new
   await page.waitForFunction(()=>document.querySelector('#sample-gallery canvas')?.width>0);
   const screenshots=path.join(__dirname,'test_output','experiment_live_frame');fs.mkdirSync(screenshots,{recursive:true});
   await page.screenshot({path:path.join(screenshots,'review-roi.png'),fullPage:true});
+
+  if(process.env.TEST_CONTINUATION_LOOP==='1'){
+    const parent1=saved.samples.find(s=>s.bottle===1),parent2=saved.samples.find(s=>s.bottle===2);
+    const frozenParents=JSON.stringify(saved.samples.map(s=>({id:s.id,target:s.target,frames:s.frames,estimated:s.recipe.estimated})));
+    await page.getByRole('button',{name:'实验设计',exact:true}).click();
+    for(const [name,value] of Object.entries({bottles:'1,2',peg_min:'6',peg_max:'8',salt_min:'6',salt_max:'8',step:'2',round_budget:'3',added_mass_budget_g:'2',time_budget_min:'10'}))await page.locator('#continuation-run-form [name='+name+']').fill(value);
+    await page.locator('#continuation-run-form button[type=submit]').click();await waitFor(async()=>(await state()).continuation_runs.length===1);
+    assert.equal((await state()).continuation_runs[0].status,'draft');
+    await page.locator('#continuation-start').click();
+    const continuations=async()=>(await state()).samples.filter(s=>s.kind==='continuation');
+    await waitFor(async()=>{const samples=await continuations();return samples.length===1&&samples[0].frames.length===1;});
+    let children=await continuations();assert.equal(children[0].bottle,1);assert.equal(children[0].parent_sample_id,parent1.id);
+    assert((await state()).continuation_runs[0].waiting_reasons['2'].includes('复核'));
+    async function reviewSample(id){
+      await page.getByRole('button',{name:'图像判相与复核',exact:true}).click();await page.evaluate(()=>ATPSLab.refresh());
+      await page.waitForSelector('#review-sample option[value="'+id+'"]',{state:'attached'});await page.locator('#review-sample').selectOption(id);
+      await page.locator('#review-form [name=classification]').selectOption('single');await page.locator('#review-form [name=clear]').check();
+      await page.locator('#review-form button[type=submit]').click();await waitFor(async()=>(await state()).samples.find(s=>s.id===id).training_eligibility.eligible);
+    }
+    await reviewSample(parent2.id);
+    await waitFor(async()=>{const samples=await continuations();return samples.length===2&&samples.every(s=>s.frames.length===1);});
+    children=await continuations();assert.equal(children[1].bottle,2);assert.equal(children[1].parent_sample_id,parent2.id);
+    await reviewSample(children[0].id);
+    await waitFor(async()=>{const samples=await continuations();return samples.length===3&&samples.every(s=>s.frames.length===1);});
+    const after=await state(),finalChildren=after.samples.filter(s=>s.kind==='continuation');
+    assert.equal(finalChildren[2].bottle,1);assert.equal(finalChildren[2].parent_sample_id,children[0].id);
+    const parentsAfter=after.samples.filter(s=>saved.samples.some(p=>p.id===s.id));assert.equal(JSON.stringify(parentsAfter.map(s=>({id:s.id,target:s.target,frames:s.frames,estimated:s.recipe.estimated}))),frozenParents);
+    assert(after.bottles.find(b=>b.bottle===1).inventory.total_mass_g>parent1.recipe.estimated.total_mass_g);
+    assert.equal(after.continuation_runs[0].used.rounds,3);
+    await page.getByRole('button',{name:'图像判相与复核',exact:true}).click();await page.evaluate(()=>ATPSLab.refresh());
+    await page.locator('#review-sample').selectOption(parent1.id);assert((await page.locator('#review-sample option:checked').innerText()).includes('历史'));
+    await page.locator('#review-current-observation').click();assert.equal(await page.locator('#review-sample').inputValue(),finalChildren[2].id);assert(!await page.locator('#review-form [name=clear]').isChecked());
+    await page.getByRole('button',{name:'运行监控',exact:true}).click();await page.evaluate(()=>ATPSLab.refresh());await page.screenshot({path:path.join(screenshots,'continuation-monitor.png'),fullPage:true});
+    console.log('PASS real six-page continuation: valid human review gates same bottle; other bottle proceeds; third addition links to child; parents and images remain frozen');
+  }
   assert.equal(await page.evaluate(()=>syntheticCameraCalls),1);assert.deepEqual(errors,[]);
   await post('/api/lab/pause',{});await post('/api/stop',{});
   console.log('PASS actual browser live-frame bridge -> real lab API -> two fake-hardware samples -> timed PNG/ROI archive; no real camera or serial');

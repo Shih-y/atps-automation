@@ -41,6 +41,8 @@ def execution_key(plan):
             commands.append(dict(source=row['source'], aspirate=motion(part['aspirate']), chase=motion(part['chase'])))
     context = dict(commands=commands, mix_after=plan.get('mix_after'),
                    mixing=motion(plan.get('mixing') or {}), purge_after=plan.get('purge_after'), purge=motion(plan.get('purge') or {}))
+    if plan.get('kind')=='continuation' and plan.get('inventory_key'):
+        context['starting_inventory_key'] = plan['inventory_key']
     return hashlib.sha256(json.dumps(context, sort_keys=True, allow_nan=False).encode()).hexdigest()
 
 
@@ -78,16 +80,37 @@ def _compiled_estimate(recipe, target, project):
             mass = steps * num(ref['mass_per_step_g'], 1e-12)
             masses[port] = masses.get(port, 0) + mass
             solutes[port] = solutes.get(port, 0) + mass * num(stock['mass_fraction'], 0, 1)
-        needed = {int(port) for port, mass in recipe.get('stock_masses', {}).items() if mass>0}
+        requested_masses = recipe.get('selected_additions_g', recipe.get('stock_masses', {}))
+        needed = {int(port) for port, mass in requested_masses.items() if mass>0}
         if not needed.issubset(masses):
             return None
-        total = sum(masses.values())
+        salt_port = integer(target['salt_port'], 10, 13)
+        added = sum(masses.values())
+        initial = recipe.get('initial_inventory')
+        initial_total = initial_peg = initial_salt = 0.
+        if recipe.get('kind') == 'continuation' and initial is None:
+            return None
+        if initial is not None:
+            if initial.get('known') is not True:
+                return None
+            initial_total = num(initial.get('total_mass_g'), 0, 10000)
+            initial_peg = num(initial.get('peg_mass_g'), 0, initial_total)
+            initial_salt = num(initial.get('salt_mass_g'), 0, initial_total)
+            initial_water = num(initial.get('water_mass_g'), 0, initial_total)
+            if abs(initial_peg+initial_salt+initial_water-initial_total)>max(1e-8,initial_total*1e-8):
+                return None
+            empty_neutral = initial.get('salt_port') is None and initial_total==initial_peg==initial_salt==initial_water==0
+            if not empty_neutral and initial.get('salt_port') != salt_port:
+                return None
+        total = initial_total+added
         if not total:
             return None
-        salt_port = integer(target['salt_port'], 10, 13)
+        peg_mass = initial_peg+solutes.get(14,0)
+        salt_mass = initial_salt+solutes.get(salt_port,0)
         return dict(stock_masses=masses, total_mass_g=total,
-                    peg_fraction=solutes.get(14, 0)/total,
-                    salt_fraction=solutes.get(salt_port, 0)/total)
+                    added_mass_g=added, initial_total_mass_g=initial_total,
+                    peg_mass_g=peg_mass,salt_mass_g=salt_mass,water_mass_g=total-peg_mass-salt_mass,
+                    peg_fraction=peg_mass/total, salt_fraction=salt_mass/total)
     except (KeyError, TypeError, ValueError):
         return None
 
@@ -128,6 +151,12 @@ def composition_record(sample, project=None):
         plan = recipe.get('plan') or {}
         rows = plan.get('items', [])
         bottle = sample.get('bottle') or plan.get('sample')
+        initial = recipe.get('initial_inventory')
+        if recipe.get('kind') == 'continuation' or initial is not None:
+            if not isinstance(initial,dict) or initial.get('known') is not True:
+                reasons.append('补加前物料未知，不能将新动作当作完整独立配样')
+            elif initial.get('total_mass_g',0)>1e-10 and initial.get('calibration_valid') is not True:
+                reasons.append('父样品组成或标定依据无效；本次新标定不能升级父记录')
         if not rows:
             reasons.append('估计组成缺少已编译动作与来源标定记录')
         elif compiled_estimate is None:
@@ -185,10 +214,16 @@ def composition_record(sample, project=None):
                 execution_key=execution_key(recipe['plan']) if recipe.get('plan') else None)
 
 def default_stocks():
-    return [dict(port=p, name=n, solute=s, mass_fraction=c, batch='', temperature_c=25, density_g_ml=None, density_evidence='', version=1) for p, n, s, c in [(10, '柠檬酸三钠', 'sodium_citrate', 0.3), (11, '硫酸铵', 'ammonium_sulfate', 0.4), (12, '硫酸钠', 'sodium_sulfate', 0.15), (13, '磷酸氢二钾 K₂HPO₄', 'K₂HPO₄', 0.4), (14, 'PEG4000', 'PEG4000', 0.4), (15, '水', 'water', 0)]]
+    from stock_chemistry import normalize_reagent_basis
+    stocks = [dict(port=p, name=n, solute=s, mass_fraction=c, batch='', temperature_c=25, density_g_ml=None, density_evidence='', version=1) for p, n, s, c in [(10, '柠檬酸三钠（二水试剂30%，无水基准）', 'sodium_citrate', 0.3), (11, '硫酸铵', 'ammonium_sulfate', 0.4), (12, '硫酸钠', 'sodium_sulfate', 0.15), (13, '磷酸氢二钾 K₂HPO₄', 'K₂HPO₄', 0.4), (14, 'PEG4000', 'PEG4000', 0.4), (15, '水', 'water', 0)]]
+    stocks[0].update(reagent_form='dihydrate', reagent_mass_fraction=.3)
+    stocks[2].update(reagent_form='anhydrous')
+    return [normalize_reagent_basis(s) for s in stocks]
 
 def validate_stock(data):
-    s = copy.deepcopy(data)
+    from stock_chemistry import normalize_reagent_basis
+    from stock_density import validate_density_context
+    s = normalize_reagent_basis(data)
     s['port'] = integer(s['port'], 10, 15)
     s['mass_fraction'] = num(s['mass_fraction'], 0, 1)
     s['temperature_c'] = num(s.get('temperature_c', 25), 0, 100)
@@ -205,7 +240,7 @@ def validate_stock(data):
             raise ValueError('母液文本字段无效')
     if s['port'] == 15 and s['mass_fraction'] != 0 or (s['port'] != 15 and s['mass_fraction'] <= 0):
         raise ValueError('母液浓度无效')
-    return s
+    return validate_density_context(s)
 
 def pulse(steps, rpm, timeout=None):
     from controller import pulse_checked
@@ -224,7 +259,8 @@ def make_calibration(data, stock, geometry_signature):
         raise ValueError('标定来源不匹配')
     groups = d.get('groups_g')
     if groups is None:
-        if not s.get('density_g_ml') or not s.get('density_evidence'):
+        from stock_density import measured_density_usable
+        if not measured_density_usable(s):
             raise ValueError('体积标定需要实测密度')
         groups = [num(v, 1e-06) * s['density_g_ml'] for v in d['groups_ml']]
     if not isinstance(groups, list) or not 1 <= len(groups) <= 1000:
@@ -348,7 +384,8 @@ def preview_recipe(request, stocks, calibrations, geometry_signature):
 def suggest_points(samples, request):
     r = request
     port = integer(r.get('salt_port', 13), 10, 13)
-    concentration = num(r.get('salt_stock_fraction', {10: 0.3, 11: 0.4, 12: 0.15, 13: 0.4}[port]), 1e-06, 1)
+    effective_default = next(s['mass_fraction'] for s in default_stocks() if s['port']==port)
+    concentration = num(r.get('salt_stock_fraction', effective_default), 1e-06, 1)
     peg_concentration = num(r.get('peg_stock_fraction', 0.4), 1e-06, 1)
     step = num(r.get('step', 0.02), 0.001, 1)
     count = integer(r.get('count', 5), 1, 5)

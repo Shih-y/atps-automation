@@ -3,7 +3,7 @@ window.ATPSLabPages.data = (ctx, page) => {
   const card = ctx.card(
     page,
     '数据范围与导出',
-    '导出保留项目引用的历史母液、标定和方法版本，以及原图、人工标签、模型轮次、采用组成及软件版本。CSV 使用独立字段。',
+    '导出保留项目引用的历史母液、标定和方法版本，以及原图、人工标签、模型轮次、采用组成及软件版本。同瓶观测链保留父编号、初始物料、累计质量及研究预算，不改写旧样品。CSV 使用独立字段。',
   );
   const filters = ctx.node('div', null, card, { className: 'lab-form' });
   function field(title, name, options) {
@@ -103,6 +103,9 @@ window.ATPSLabPages.data = (ctx, page) => {
         '复核',
         '训练资格 / 原因',
         '照片数',
+        '父观测 / 链起点',
+        '同瓶研究',
+        '累计质量估计 / g',
       ],
       filtered.map((s) => {
         const c = s.composition || {};
@@ -128,6 +131,9 @@ window.ATPSLabPages.data = (ctx, page) => {
             ? '可用'
             : (s.training_eligibility?.reasons || []).join('；'),
           s.frames?.length || 0,
+          `${s.parent_sample_id?.slice(0, 8) || '无'} / ${s.lineage_root_id?.slice(0, 8) || s.id.slice(0, 8)}`,
+          s.continuation_run_id?.slice(0, 8) || '独立配样',
+          s.recipe?.estimated?.total_mass_g ?? '未知',
         ];
       }),
     );

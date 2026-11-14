@@ -22,8 +22,40 @@ window.ATPSLabPages.monitor = (ctx, page) => {
   });
   const stop = ctx.node('button', '立即停止 · 保留连接', card, { type: 'button' });
   stop.onclick = () => ctx.stop();
-  const vial = ctx.node('div', null, card),
+  const vial = ctx.node('div', null, card, { id: 'inventory-table' }),
     rows = ctx.node('div', null, card);
+  const continuation = ctx.card(
+    page,
+    '同瓶研究与累计物料',
+    '泵阀串行，等待复核按瓶独立。累计质量来自标定与已完成动作估计，未做独立组分测量时不是实测组成。',
+  );
+  const runSelect = ctx.node('select', null, continuation, {
+    id: 'continuation-monitor-select',
+    ariaLabel: '监控同瓶研究',
+  });
+  runSelect.onchange = () => {
+    ctx.continuationRunId = runSelect.value;
+    ctx.render();
+  };
+  const runInfo = ctx.node('div', null, continuation, { id: 'continuation-monitor' });
+  ctx.button(
+    continuation,
+    '暂停后续补加',
+    async () => {
+      await ctx.continuationCommand('pause');
+      ctx.tell('已暂停后续补加；已开始的有限动作按服务状态处理。');
+    },
+    'continuation-pause',
+  );
+  ctx.button(
+    continuation,
+    '恢复所选同瓶研究',
+    async () => {
+      await ctx.continuationCommand('resume');
+      ctx.tell('已请求恢复，仍核对剩余墙钟预算及各瓶有效复核。');
+    },
+    'continuation-resume',
+  );
   const ops = ctx.card(
     page,
     '排队、重配与换瓶',
@@ -93,7 +125,14 @@ window.ATPSLabPages.monitor = (ctx, page) => {
         : '请先选择项目';
       ctx.table(
         vial,
-        ['瓶位', '占用状态', '关联样品'],
+        [
+          '瓶位',
+          '占用状态',
+          '关联样品',
+          '估计累计 / g',
+          '距项目质量上限 / g',
+          '物料依据 / 续加条件',
+        ],
         (ctx.state.bottles || []).map((b) => [
           b.bottle,
           { free: '空闲', assigned: '已分配', occupied: '占用', needs_replacement: '待换瓶' }[
@@ -102,6 +141,17 @@ window.ATPSLabPages.monitor = (ctx, page) => {
             b.state ||
             '未知',
           b.sample_id?.slice(0, 8) || '无',
+          b.inventory?.known ? Number(b.inventory.total_mass_g).toFixed(4) : '未知',
+          b.inventory?.known && Number.isFinite(p?.safe_mass_limit_g)
+            ? (p.safe_mass_limit_g - b.inventory.total_mass_g).toFixed(4)
+            : '未知',
+          !b.inventory?.known
+            ? b.inventory?.reason || '缺少可靠物料记录，不能定量续加'
+            : b.inventory.total_mass_g === 0
+              ? '已确认干净空瓶，可首次配样'
+              : b.inventory.calibration_valid
+                ? '按适用标定估计；下一步仍须有效人工复核'
+                : '现有物料缺少适用标定依据',
         ]),
       );
       ctx.table(
@@ -146,6 +196,81 @@ window.ATPSLabPages.monitor = (ctx, page) => {
           ];
         }),
       );
+      ctx.options(
+        runSelect,
+        ctx
+          .continuationRuns()
+          .map((r) => [
+            r.id,
+            `${ctx.runState(r.status)} · ${(r.bottles || []).join('、')}号瓶 · ${r.id.slice(0, 8)}`,
+          ]),
+        '尚无同瓶研究',
+      );
+      runSelect.value = ctx.continuationRunId || '';
+      const run = ctx.continuationRun();
+      runInfo.replaceChildren();
+      if (run) {
+        ctx.node(
+          'p',
+          `${ctx.runState(run.status)}；${run.reason || '按瓶调度'}。墙钟时间预算含等待人工复核；暂停不应理解为时间预算停止。`,
+          runInfo,
+        );
+        const budget = ctx.node('div', null, runInfo);
+        ctx.table(
+          budget,
+          ['预算', '已用/保守占用', '剩余'],
+          [
+            ['补加次数', run.used?.rounds ?? 0, run.remaining?.rounds ?? '未知'],
+            [
+              '补加质量 / g',
+              ctx.mass(run.used?.added_mass_g ?? 0),
+              ctx.mass(run.remaining?.added_mass_g),
+            ],
+            [
+              '墙钟时间 / s',
+              Number.isFinite(run.used?.elapsed_s)
+                ? run.used.elapsed_s.toFixed(0)
+                : Number.isFinite(run.remaining?.time_s)
+                  ? Math.max(0, (run.budgets?.time_budget_s ?? 0) - run.remaining.time_s).toFixed(0)
+                  : '未启动',
+              Number.isFinite(run.remaining?.time_s) ? run.remaining.time_s.toFixed(0) : '未知',
+            ],
+          ],
+        );
+        const bottles = ctx.node('div', null, runInfo);
+        ctx.table(
+          bottles,
+          ['研究瓶位', '下一次补加条件 / 等待原因'],
+          (run.bottles || []).map((b) => {
+            const bottle = (ctx.state.bottles || []).find((x) => x.bottle === b),
+              sample = (ctx.state.samples || []).find((s) => s.id === bottle?.sample_id);
+            const reason = run.waiting_reasons?.[b] || run.bottle_states?.[b]?.reason;
+            return [
+              b,
+              reason ||
+                (!bottle?.inventory?.known
+                  ? '瓶内物料未知'
+                  : !sample
+                    ? '已确认空瓶，可建立首次观测'
+                    : sample.execution_state === 'preparing'
+                      ? '正在执行本轮动作'
+                      : sample.training_eligibility?.eligible
+                        ? '人工有效复核完成，可规划下一剂'
+                        : (sample.training_eligibility?.reasons || ['等待照片与有效人工复核']).join(
+                            '；',
+                          )),
+            ];
+          }),
+        );
+        if (run.next_candidate) {
+          const c = run.next_candidate;
+          ctx.node(
+            'p',
+            `最近冻结方案，瓶 ${c.bottle ?? c.planned_bottle ?? '?'}：PEG ${ctx.fraction(c.composition?.peg_fraction ?? c.peg_fraction)}，盐 ${ctx.fraction(c.composition?.salt_fraction ?? c.salt_fraction)}；理由 ${ctx.selectionReason(c.reason)}。`,
+            runInfo,
+          );
+        }
+      } else ctx.node('p', '没有已建立的同瓶研究。', runInfo);
       ctx.selectSample(select);
     },
   };

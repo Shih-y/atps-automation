@@ -14,8 +14,9 @@ from contextlib import closing
 from pathlib import Path
 from capture_store import timestamp, parse_time, validate_png, validate_analysis
 import experiment_domain as domain
+from continuation_service import ContinuationMixin
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 HARD_EXCLUSIONS = {'interrupted', 'restart_interrupted', 'manual_composition', 'missing_mixing'}
 
 
@@ -23,7 +24,7 @@ def uid():
     return secrets.token_hex(16)
 
 
-class ExperimentService:
+class ExperimentService(ContinuationMixin):
     def __init__(self, controller):
         self.controller = controller
         self.lock = threading.RLock()
@@ -37,6 +38,7 @@ class ExperimentService:
         self.db = sqlite3.connect(self.directory / 'experiments.sqlite3', check_same_thread=False)
         self.db.execute('CREATE TABLE IF NOT EXISTS state (id INTEGER PRIMARY KEY, body TEXT NOT NULL)')
         row = self.db.execute('SELECT body FROM state WHERE id=1').fetchone()
+        self._restarting = bool(row)
         self.data = json.loads(row[0]) if row else {}
         if row and self.data.get('schema_version', 1) < SCHEMA_VERSION:
             backup_dir = self.directory / 'backups'
@@ -83,6 +85,7 @@ class ExperimentService:
             project.setdefault('composition_tolerance_fraction', .01)
             for cal in project.get('calibrations', []):
                 cal.setdefault('status', 'trial')
+        self._continuation_normalize(restarting=self._restarting)
         self.data['schema_version'] = SCHEMA_VERSION
 
     def _save(self):
@@ -178,7 +181,9 @@ class ExperimentService:
                 bottle['state'] = 'free' if not sample else 'assigned' if sample['status'] == 'queued' else 'needs_replacement' if sample['status'] in ('interrupted', 'observation_complete', 'cancelled') else 'occupied'
             result['start_previews'] = {p['id']: self._start_preview(p) for p in self.data['projects']}
             result['compatible_calibrations'] = {p['id']: self._compatible_calibrations(p) for p in self.data['projects']}
-            return result
+            from stock_density import audit_stocks
+            result['density_audit'] = audit_stocks(result['stocks'])
+            return self._continuation_view(result)
 
     def close(self):
         if self.closed.is_set():
@@ -330,8 +335,31 @@ class ExperimentService:
         # Controller calls this under its lock. Never invert the lock order.
         if self.closed.is_set() or self.cancel_dispatch.is_set() or not self.data.get('running') or self.active_stop_epoch != self.stop_epoch:
             return False
-        return any(s['id'] == sample_id and s['status'] == 'preparing'
-                   and s.get('project_id') == self.data.get('active_project_id') for s in self.data['samples'])
+        sample = next((s for s in self.data['samples'] if s['id'] == sample_id and s['status'] == 'preparing'
+                       and s.get('project_id') == self.data.get('active_project_id')), None)
+        if sample is None:
+            return False
+        sample.pop('dispatch_rejection_reason',None)
+        if sample.get('kind') == 'continuation':
+            run_id = sample.get('continuation_run_id')
+            run = next((r for r in self.data['continuation_runs'] if r['id']==run_id),None)
+            if run_id != self.data.get('active_continuation_run_id') or not run or run['status']!='running':
+                sample['dispatch_rejection_reason'] = 'superseded_run'
+                return False
+            project = next((p for p in self.data['projects'] if p['id']==sample['project_id']),None)
+            offsets = [o for o in (project or {}).get('photo_offsets_s',[]) if o >= (project or {}).get('min_settle_s',0)]
+            duration = sample.get('recipe',{}).get('estimated_duration_s')
+            remaining = run['budgets']['time_budget_s']-(time.time()-run.get('started_epoch',0))
+            if not offsets or duration is None or remaining < duration+min(offsets):
+                sample['dispatch_rejection_reason'] = 'time_budget'
+                return False
+            from continuation_domain import inventory_key
+            inventory = self._bottle(sample['bottle'])['inventory']
+            return inventory.get('known') and inventory_key(inventory) == sample['recipe']['inventory_key']
+        if self.data.get('active_continuation_run_id') or sample_id not in (self.data.get('active_batch') or {}).get('sample_ids',[]):
+            sample['dispatch_rejection_reason'] = 'superseded_batch'
+            return False
+        return True
 
     def _stop(self):
         self.stop_epoch += 1
@@ -350,12 +378,23 @@ class ExperimentService:
             with self.lock:
                 self.cancel_dispatch.set()
                 self.data['running'] = False
+                self._continuation_stop('软件停止后需重新核实瓶内物料；不会自动续加或重放')
                 for sample in self.data['samples']:
                     if sample['status'] == 'preparing':
                         self._set_state(sample, 'interrupted')
                         self._exclude(sample, 'interrupted', '软件停止后交付量未确定，禁止自动重做', hard=True)
                 self._best_effort_save()
         return dict(ok=True, stop_status=self.data['stop_status'], storage_error=self.data.get('storage_error'))
+
+    def _cached_request(self, key, fingerprint):
+        """Caller holds only the service lock; cache lookup never reads hardware."""
+        if not key or key not in self.data['idempotency']:
+            return None
+        saved = self.data['idempotency'][key]
+        if saved['fingerprint'] != fingerprint:
+            raise ValueError('同一个请求编号不能用于不同操作内容')
+        self._save()
+        return copy.deepcopy(saved['result'])
 
     def handle(self, op, body):
         start_epoch = self.stop_epoch
@@ -372,24 +411,27 @@ class ExperimentService:
                 self.data['backups'].append(record)
                 self._save()
             return dict(ok=True, backup=record)
-        if op == 'start':
-            if not body.get('project_id'):
+        request_id = body.get('request_id')
+        key = '%s:%s' % (op, request_id) if request_id else None
+        fingerprint = json.dumps(body, sort_keys=True, ensure_ascii=False)
+        if key:
+            with self.lock:
+                cached = self._cached_request(key,fingerprint)
+                if cached is not None:
+                    return cached
+        device_state = None
+        if op in ('start', 'continuation_start', 'continuation_resume'):
+            if op == 'start' and not body.get('project_id'):
                 raise ValueError('开始当前项目必须指定project_id')
-            state = self.controller.snapshot()
-            if not state.get('connected') or state.get('busy'):
-                raise ValueError('设备未连接或忙碌')
+            device_state = self.controller.snapshot()
         with self.lock:
-            request_id = body.get('request_id')
-            key = '%s:%s' % (op, request_id) if request_id else None
-            fingerprint = json.dumps(body, sort_keys=True, ensure_ascii=False)
-            if key and key in self.data['idempotency']:
-                saved = self.data['idempotency'][key]
-                if saved['fingerprint'] != fingerprint:
-                    raise ValueError('同一个请求编号不能用于不同操作内容')
-                # A previous attempt may have mutated memory but failed to
-                # commit. Reuse the operation, never its unpersisted success.
-                self._save()
-                return copy.deepcopy(saved['result'])
+            # Another request may have committed while the device snapshot was
+            # read outside this lock. Recheck before treating this as a start.
+            cached = self._cached_request(key,fingerprint)
+            if cached is not None:
+                return cached
+            if device_state is not None and (not device_state.get('connected') or device_state.get('busy')):
+                raise ValueError('设备未连接或忙碌')
             result, persist = self._handle(op, body, start_epoch=start_epoch)
             result = dict(result, ok=True)
             if key:
@@ -398,15 +440,26 @@ class ExperimentService:
             if persist:
                 try:
                     self._save()
-                except Exception:
+                except Exception as error:
                     # An API failure must never leave a new automatic run armed.
                     self.cancel_dispatch.set()
                     self.data['running'] = False
+                    active = self.data.get('active_continuation_run_id')
+                    if active:
+                        run = self._get('continuation_runs',active)
+                        if run['status'] in ('running','waiting_review','blocked'):
+                            run.update(status='paused',reason='存档失败，后续自动调度已暂停；恢复存储后请显式恢复',storage_error=str(error))
+                    if key and op in ('start','continuation_start','continuation_resume'):
+                        # The start never committed. Do not retain a running
+                        # success that could mask the paused recovery state.
+                        self.data['idempotency'].pop(key,None)
                     raise
             return copy.deepcopy(result)
 
     def _handle(self, op, body, start_epoch=None):
         result = {}
+        if op.startswith('continuation_'):
+            return self._continuation_handle(op, body, start_epoch)
         if op == 'stock':
             stock = domain.validate_stock(body)
             old = next((s for s in self.data['stocks'] if s['port'] == stock['port']), {})
@@ -448,13 +501,19 @@ class ExperimentService:
                     recipe = dict(sample['target'], **({'sample': sample['bottle']} if sample.get('bottle') else {}))
                     if not self._preview(project, recipe)['executable']:
                         raise ValueError('配方条件已失效')
-            self.data.update(running=True, active_project_id=project['id'], active_batch=copy.deepcopy(preview), message='', stop_status='unknown')
+            self.data.update(running=True, active_project_id=project['id'], active_continuation_run_id=None,
+                             active_batch=copy.deepcopy(preview), message='', stop_status='unknown')
             self.active_stop_epoch = start_epoch
             self.cancel_dispatch.clear()
             result['start_preview'] = preview
         elif op == 'pause':
             self.cancel_dispatch.set()
             self.data['running'] = False
+            active = self.data.get('active_continuation_run_id')
+            if active:
+                run = self._get('continuation_runs',active)
+                if run['status'] in ('running','waiting_review','blocked'):
+                    run.update(status='paused',reason='已暂停后续任务；墙钟预算继续计时')
         elif op == 'cancel':
             sample = self._get('samples', body['sample_id'])
             if sample['status'] != 'queued':
@@ -547,6 +606,7 @@ class ExperimentService:
             self._cancel_photos(sample)
         self.data['bottle_history'].append(dict(bottle=bottle['bottle'], old_sample_id=old_id, at=timestamp(), confirmed_clean_empty=True))
         bottle['sample_id'] = None
+        self._inventory_reset(bottle)
 
     def _camera_online(self):
         camera = self.data['camera']
@@ -597,6 +657,8 @@ class ExperimentService:
         if body.get('job_id'):
             job = self._get('photo_jobs', body['job_id'])
             sample = self._get('samples', job['sample_id'])
+            if sample.get('continuation_replaced_at'):
+                raise ValueError('本瓶已经续加；只能复核旧照片，不能给旧样品补拍')
             if job['generation'] != sample['generation']:
                 raise ValueError('旧观察阶段不能补拍')
             existing = next((j for j in self.data['photo_jobs'] if j.get('replaces') == job['id']), None)
@@ -607,7 +669,7 @@ class ExperimentService:
             replacement = dict(job, id=uid(), status='due', mapping_version=self.data['camera']['mapping_version'], replaces=job['id'])
         else:
             sample = self._get('samples', body['sample_id'])
-            if not sample.get('mixed_at') or sample.get('released_at'):
+            if not sample.get('mixed_at') or sample.get('released_at') or sample.get('continuation_replaced_at'):
                 raise ValueError('请选择仍在瓶位上的已混合样品')
             elapsed = max(0, time.time() - parse_time(sample['mixed_at']).timestamp())
             replacement = dict(id=uid(), sample_id=sample['id'], bottle=sample['bottle'], generation=sample['generation'],
@@ -623,7 +685,7 @@ class ExperimentService:
         sample = self._get('samples', body['sample_id'])
         project = self._get('projects', sample['project_id'])
         reason = str(body.get('reason', '')).strip()
-        if not reason or not sample.get('mixed_at') or sample.get('released_at'):
+        if not reason or not sample.get('mixed_at') or sample.get('released_at') or sample.get('continuation_replaced_at'):
             raise ValueError('请提供延长依据，并保留原样品在瓶位上')
         old_max = sample.get('observation_max_s', project['max_observe_s'])
         new_max = domain.num(body['max_observe_s'], old_max, 86400)
@@ -785,6 +847,11 @@ class ExperimentService:
         self.data['running'] = False
         self.data['stop_status'] = 'unknown'
         with self.lock:
+            active = self.data.get('active_continuation_run_id')
+            if active:
+                run = self._get('continuation_runs',active)
+                if run['status'] in ('running','waiting_review','blocked'):
+                    run.update(status='paused',reason='已接受手动调试，后续自动加料暂停；可核实状态后显式恢复')
             if action == 'select_port':
                 self._save()
                 return
@@ -800,8 +867,13 @@ class ExperimentService:
                 self._save()
                 return
             targets = payload.get('samples') if action == 'tubes' and operation in ('drain_samples', 'finish') else None
+            affected = targets if targets is not None else [target] if target is not None else list(range(1,6))
+            if action != 'bubble':
+                for number in affected:
+                    if number in range(1,6):
+                        self._inventory_unknown(self._bottle(number),'已验证手动加减液，瓶内累计物料未经核实')
             for sample in self.data['samples']:
-                if sample.get('released_at') or sample['status'] in ('released', 'cancelled'):
+                if sample.get('released_at') or sample.get('continuation_replaced_at') or sample['status'] in ('released', 'cancelled'):
                     continue
                 if target is not None and target != sample.get('bottle'):
                     continue
@@ -839,11 +911,14 @@ class ExperimentService:
                 if event == 'completed' and payload.get('action') == 'bubble':
                     target = payload.get('sample') or payload.get('debug_parameters', {}).get('sample', 1)
                     for sample in self.data['samples']:
-                        if sample.get('bottle') == target and not sample.get('released_at') and sample['status'] not in ('released', 'queued', 'cancelled'):
+                        if sample.get('bottle') == target and not sample.get('released_at') and not sample.get('continuation_replaced_at') and sample['status'] not in ('released', 'queued', 'cancelled'):
                             self._mix_completed(sample, timestamp())
                     self._save()
                 return
             sample = self._get('samples', payload['experiment_sample_id'])
+            if event == 'completed' and sample.get('completion_event_recorded'):
+                self._save()
+                return
             sample['progress'] = copy.deepcopy(plan)
             sample.setdefault('action_events', []).append(dict(at=timestamp(), event=event, error=str(error) if error else None,
                                                                current=copy.deepcopy((plan or {}).get('current')),
@@ -852,8 +927,11 @@ class ExperimentService:
             if event == 'failed':
                 self._set_state(sample, 'interrupted')
                 self._exclude(sample, 'interrupted', str(error or '设备动作中断'), hard=True)
-                self.data['running'] = False
-                self.cancel_dispatch.set()
+                active_run = sample.get('continuation_run_id') == self.data.get('active_continuation_run_id') if sample.get('kind')=='continuation' else (
+                    not self.data.get('active_continuation_run_id') and sample['id'] in (self.data.get('active_batch') or {}).get('sample_ids',[]))
+                if active_run:
+                    self.data['running'] = False
+                    self.cancel_dispatch.set()
             elif event == 'completed':
                 if sample['status'] == 'interrupted':
                     self._exclude(sample, 'interrupted', '停止后收到结束回调，仍需核实交付量', hard=True)
@@ -862,6 +940,8 @@ class ExperimentService:
                     self._exclude(sample, 'missing_mixing', '缺少混合完成依据', hard=True)
                 else:
                     self._mix_completed(sample, plan['mixing_finished_at'])
+                    sample['completion_event_recorded'] = timestamp()
+            self._continuation_action_event(event, sample, plan, error)
             self._save()
 
     def _loop(self):
@@ -898,7 +978,9 @@ class ExperimentService:
                         job['failure_reason'] = '相机、浏览器或电脑未在线，未采集到计划照片'
                 elif job['status'] == 'due' and not self._camera_online():
                     job.update(status='missed', failure_reason='到期任务未保存且相机心跳中断', lateness_s=max(0, now - job.get('due_at', now)))
-            if self.data['running'] and not self.cancel_dispatch.is_set() and self.active_stop_epoch == self.stop_epoch and state.get('connected') and not state.get('busy'):
+            if self.data['running'] and not self.cancel_dispatch.is_set() and self.active_stop_epoch == self.stop_epoch and self.data.get('active_continuation_run_id'):
+                payload = self._continuation_tick(state, now)
+            if self.data['running'] and not self.cancel_dispatch.is_set() and self.active_stop_epoch == self.stop_epoch and not self.data.get('active_continuation_run_id') and state.get('connected') and not state.get('busy'):
                 project_id = self.data.get('active_project_id')
                 batch_ids = set(self.data.get('active_batch', {}).get('sample_ids', []))
                 queued = [s for s in self.data['samples'] if s['status'] == 'queued'
@@ -924,6 +1006,7 @@ class ExperimentService:
                     else:
                         sample['recipe'] = preview
                         sample['execution_key'] = domain.execution_key(preview['plan'])
+                        sample['independent_start_inventory'] = copy.deepcopy(self._bottle(sample['bottle'])['inventory'])
                         plan = copy.deepcopy(preview['plan'])
                         plan['sample'] = sample['bottle']
                         for row in plan.get('items', []):
@@ -935,18 +1018,49 @@ class ExperimentService:
                 elif not queued:
                     self.data['running'] = False
                     self.cancel_dispatch.set()
-            self._save()
+            try:
+                self._save()
+            except Exception as error:
+                self.data['running'] = False
+                self.cancel_dispatch.set()
+                if payload:
+                    sample = self._get('samples',payload['experiment_sample_id'])
+                    self._set_state(sample,'interrupted')
+                    self._exclude(sample,'interrupted','规划存档失败，未启动动作，禁止自动重放',hard=True)
+                    self._continuation_action_event('failed',sample,None,error)
+                self._best_effort_save()
+                raise
         if payload and self.dispatch_allowed(payload['experiment_sample_id']):
             try:
                 self.controller.start(payload)
             except Exception as error:
-                self.on_action_event('failed', payload, error=error)
+                sample = self._get('samples',payload['experiment_sample_id'])
+                if sample.get('dispatch_rejection_reason'):
+                    self._reject_dispatch(payload)
+                else:
+                    self.on_action_event('failed', payload, error=error)
         elif payload:
-            with self.lock:
-                sample = self._get('samples', payload['experiment_sample_id'])
-                if sample['status'] == 'preparing':
-                    self._set_state(sample, 'queued')
-                    self._best_effort_save()
+            self._reject_dispatch(payload)
+
+    def _reject_dispatch(self, payload):
+        with self.lock:
+            sample = self._get('samples',payload['experiment_sample_id'])
+            if sample['status'] != 'preparing':
+                return
+            if sample.get('kind') == 'continuation':
+                reason = sample.get('dispatch_rejection_reason','dispatch_cancelled')
+                self._set_state(sample,'interrupted')
+                self._exclude(sample,'interrupted','规划后调度取消；本次未启动且不会自动重放',hard=True)
+                sample['delivery_started'] = False
+                self._continuation_action_event('failed',sample,None,reason)
+                if reason == 'time_budget':
+                    run = self._get('continuation_runs',sample['continuation_run_id'])
+                    record = next(r for r in run['rounds'] if r['sample_id']==sample['id'])
+                    record['status'] = 'not_started'
+                    self._continuation_finish(run,'budget_complete','存档后剩余墙钟预算不足以完成动作和有效观察，未发送加料命令；预算保守保留')
+            else:
+                self._set_state(sample,'queued')
+            self._best_effort_save()
 
     def _tick_locked(self):
         return self.tick()
@@ -961,6 +1075,8 @@ class ExperimentService:
             raise ValueError('相机离线')
         if job['status'] not in ('due', 'missed', 'failed') or sample['status'] not in ('settling', 'observation_complete') or sample.get('released_at'):
             raise ValueError('样品不在有效拍照状态')
+        if sample.get('continuation_replaced_at') or self._bottle(sample['bottle'])['sample_id'] != sample['id']:
+            raise ValueError('此瓶已经进入新样品阶段，不能将新照片保存到旧样品')
         if job['generation'] != sample['generation'] or body['mapping_version'] != job['mapping_version'] or body['mapping_version'] != camera['mapping_version']:
             raise ValueError('映射或样品观察阶段已变化，请选择补拍')
         captured = parse_time(body['captured_at'])
@@ -1014,8 +1130,12 @@ class ExperimentService:
         sample_ids = {s['id'] for s in samples}
         data['projects'], data['samples'] = projects, samples
         data['rounds'] = [r for r in data['rounds'] if r.get('project_id') in project_ids]
+        data['continuation_runs'] = [r for r in data.get('continuation_runs',[]) if r.get('project_id') in project_ids]
         data['photo_jobs'] = [j for j in data['photo_jobs'] if j.get('sample_id') in sample_ids]
         data['bottles'] = [b for b in data['bottles'] if b.get('sample_id') in sample_ids]
+        for bottle in data['bottles']:
+            bottle['inventory_history'] = [i for i in bottle.get('inventory_history',[])
+                                           if i.get('project_id') in project_ids or i.get('sample_id') is None]
         data['bottle_history'] = [b for b in data.get('bottle_history', []) if b.get('old_sample_id') in sample_ids]
         data['backups'] = [b for b in data.get('backups', []) if project_id is None or b.get('project_id') == project_id]
         data['start_previews'] = {k: v for k, v in data['start_previews'].items() if k in project_ids}
@@ -1023,6 +1143,7 @@ class ExperimentService:
         data.pop('idempotency', None)
         if data.get('active_project_id') not in project_ids:
             data['active_project_id'] = None
+            data['active_continuation_run_id'] = None
             data.pop('active_batch', None)
         stocks = {(s['port'], s.get('version', 1)): s for s in data['stocks']} if project_id is None else {}
         calibrations = {c['id']: c for c in data['calibrations']} if project_id is None else {}
@@ -1033,6 +1154,8 @@ class ExperimentService:
                 calibrations[cal['id']] = cal
         data['stocks'] = list(stocks.values())
         data['calibrations'] = list(calibrations.values())
+        from stock_density import audit_stocks
+        data['density_audit'] = audit_stocks(data['stocks'])
         try:
             from software_version import version_info
             version = version_info()
@@ -1049,7 +1172,8 @@ class ExperimentService:
                          'target_peg_fraction', 'target_salt_fraction', 'adopted_peg_fraction', 'adopted_salt_fraction',
                          'deviation_peg_fraction', 'deviation_salt_fraction', 'composition_units', 'training_eligible',
                          'training_exclusion_reasons', 'label_version', 'frame_id', 'mixed_at', 'execution_key',
-                         'replicate_group', 'replicate_index', 'software_version', 'source_commit'])
+                         'replicate_group', 'replicate_index', 'parent_sample_id', 'lineage_root_id', 'continuation_run_id',
+                         'initial_mass_g', 'estimated_added_mass_g', 'estimated_final_mass_g', 'software_version', 'source_commit'])
         for sample in samples:
             composition, target, label = sample['composition'], sample.get('target', {}), sample.get('label') or {}
             values = [sample['id'], sample['project_id'], sample.get('bottle'), sample['execution_state'], sample['review_state'],
@@ -1057,7 +1181,11 @@ class ExperimentService:
                       composition['salt_fraction'], composition['deviation']['peg_fraction'], composition['deviation']['salt_fraction'],
                       composition['units'], sample['training_eligibility']['eligible'], '; '.join(sample['training_eligibility']['reasons']),
                       label.get('version'), label.get('frame_id'), sample.get('mixed_at'), sample.get('execution_key'),
-                      sample.get('replicate_group'), sample.get('replicate_index'), version.get('version'), version.get('commit')]
+                      sample.get('replicate_group'), sample.get('replicate_index'), sample.get('parent_sample_id'),
+                      sample.get('lineage_root_id'),sample.get('continuation_run_id'),
+                      sample.get('recipe',{}).get('initial_inventory',{}).get('total_mass_g'),
+                      sample.get('recipe',{}).get('added_mass_g'),sample.get('recipe',{}).get('estimated',{}).get('total_mass_g'),
+                      version.get('version'), version.get('commit')]
             writer.writerow(["'" + str(v) if isinstance(v, str) and v.startswith(('=', '+', '-', '@')) else v for v in values])
         output = io.BytesIO()
         with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as archive:

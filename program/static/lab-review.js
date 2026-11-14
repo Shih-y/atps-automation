@@ -6,8 +6,28 @@ window.ATPSLabPages.review = (ctx, page) => {
     '有效观察期内拍下的照片可稍后复核。时间达标不等于已经分相平衡；没有界面也不能直接作为单相标签。',
   );
   const select = ctx.node('select', null, card, { id: 'review-sample', ariaLabel: '复核样品' });
+  ctx.button(
+    card,
+    '查看此瓶当前观测',
+    async () => {
+      const selected = ctx.samples().find((s) => s.id === select.value),
+        current = (ctx.state.bottles || []).find((b) => b.bottle === selected?.bottle);
+      if (!current?.sample_id) throw Error('此瓶目前没有占用样品');
+      select.value = current.sample_id;
+      review.elements.clear.checked = false;
+      renderSelected();
+    },
+    'review-current-observation',
+  );
   const summary = ctx.node('p', '', card),
     jobs = ctx.node('div', null, card);
+  ctx.node(
+    'p',
+    '同瓶补加会生成新的观测编号。旧照片与旧组成保留；只有当前瓶的有效人工复核能放行下一次补加，不确定时继续观察。',
+    card,
+    { className: 'muted' },
+  );
+  const lineage = ctx.node('div', null, card, { id: 'observation-lineage' });
   const gallery = ctx.node('div', null, card, { className: 'lab-gallery', id: 'sample-gallery' });
   const review = ctx.form(
     card,
@@ -214,6 +234,32 @@ window.ATPSLabPages.review = (ctx, page) => {
     summary.textContent = s
       ? `${ctx.sampleName(s)}；当前观察阶段 ${s.generation ?? 0}；训练${s.training_eligibility?.eligible ? '可用' : '不可用'}：${(s.training_eligibility?.reasons || []).join('；') || '见复核状态'}；采用组成：${ctx.basis(s.composition?.basis)}`
       : '选择样品后查看照片。';
+    if (s?.continuation_replaced_at)
+      summary.append(' 这是历史观测；复核可更新旧相图点，但不能代替此瓶当前观测的复核。');
+    const chain = [],
+      seen = new Set();
+    let record = s;
+    while (record && !seen.has(record.id)) {
+      seen.add(record.id);
+      chain.unshift(record);
+      record = (ctx.state.samples || []).find((x) => x.id === record.parent_sample_id);
+    }
+    ctx.table(
+      lineage,
+      ['同瓶观测链', '父观测', '累计质量估计 / g', '采用PEG / 盐', '图像数', '复核'],
+      chain.map((item, index) => [
+        `${index === 0 ? '初始' : '补加后'}：${ctx.sampleName(item)}`,
+        item.parent_sample_id?.slice(0, 8) || '起点',
+        item.recipe?.estimated?.total_mass_g ?? '未知',
+        ctx.fraction(item.composition?.peg_fraction) +
+          ' / ' +
+          ctx.fraction(item.composition?.salt_fraction),
+        item.frames?.length || 0,
+        { single: '单相', two_phase: '双相', uncertain: '待确认', unreviewed: '未复核' }[
+          item.review_state
+        ] || '未复核',
+      ]),
+    );
     ctx.table(
       jobs,
       ['计划 / 混合后秒', '实际拍摄', '迟拍 / s', '状态', '失败原因'],

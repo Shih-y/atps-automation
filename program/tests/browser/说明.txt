@@ -29,3 +29,8 @@ experiment_live_frame.js：启动专用8879假硬件服务，以canvas.captureSt
 desktop_smoke.js直接启动构建后的EXE，以隔离数据目录验收六页、合成相机、导出和关闭。
 ATPS_EXE可指定待验收EXE；ATPS_TEST_TEMP_ROOT可指定测试专用的可写临时目录。
 测试会关闭自己创建的EXE进程树，不会关闭其他程序。新发布流水线包含此验收。
+
+2026.11.14.1 同瓶研究：
+continuation_console.js：隔离假HTTP验证同瓶三步预览、单次与范围设置、创建/启动分离、库存、暂停/恢复、历史链、密度依据及二水柠檬酸三钠浓度换算。
+设置 TEST_CONTINUATION_LOOP=1 后运行 experiment_live_frame.js：正式HTTP服务与假控制器、合成视频完成瓶1续加→复核瓶2后瓶2续加→复核瓶1子样品后瓶1再续加，检查父图/父组成不变、库存增加和3次预算。
+同瓶模式的等待/观察使用测试专用时间，不代表真实装置应等这些秒数。运行后清除TEST_CONTINUATION_LOOP环境变量即可恢复原两瓶成像回归。

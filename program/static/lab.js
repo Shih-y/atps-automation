@@ -14,6 +14,8 @@
   const ctx = {
     state: {},
     projectId: null,
+    continuationRunId: null,
+    continuationRequests: {},
     token: '',
     refreshing: false,
     pages: [],
@@ -31,8 +33,45 @@
     samples() {
       return (this.state.samples || []).filter((s) => s.project_id === this.projectId);
     },
+    continuationRuns() {
+      return (this.state.continuation_runs || []).filter((r) => r.project_id === this.projectId);
+    },
+    continuationRun() {
+      return this.continuationRuns().find((r) => r.id === this.continuationRunId);
+    },
+    runState(status) {
+      return (
+        {
+          draft: '已建立，未启动',
+          running: '自动研究中',
+          waiting_review: '等待人工复核',
+          paused: '已暂停续加',
+          budget_complete: '已到预算',
+          exhausted: '当前网格无可达点，已结束',
+          stopped: '已停止',
+          interrupted: '已中断，需处理',
+          blocked: '条件不满足',
+        }[status] ||
+        status ||
+        '未知'
+      );
+    },
+    async continuationCommand(operation) {
+      const run = this.continuationRun();
+      if (!run) throw Error('先选择同瓶研究任务');
+      const key = operation + ':' + run.id;
+      this.continuationRequests[key] ||= crypto.randomUUID();
+      const result = await this.api('continuation_' + operation, {
+        run_id: run.id,
+        request_id: this.continuationRequests[key],
+      });
+      delete this.continuationRequests[key];
+      return result;
+    },
     sampleName(s) {
-      return `瓶${s.bottle || '待分配'} · ${s.name || s.id.slice(0, 8)}`;
+      const current = (this.state.bottles || []).some((b) => b.sample_id === s.id);
+      const historical = s.continuation_replaced_at || s.released_at;
+      return `瓶${s.bottle || '待分配'}${current ? ' · 当前' : historical ? ' · 历史' : ''}${s.kind === 'continuation' ? ' · 补加后' : ''} · ${s.name || s.id.slice(0, 8)}`;
     },
     tell(message, error = false) {
       this.message.textContent = message;
@@ -155,6 +194,21 @@
     fraction(v) {
       return Number.isFinite(v) ? (100 * v).toFixed(3) + '%' : '未知';
     },
+    mass(v) {
+      return Number.isFinite(v) ? v.toFixed(4) : '未知';
+    },
+    selectionReason(reason) {
+      return (
+        {
+          reachable_boundary_coverage: '优先覆盖可达的相边界候选',
+          reachable_two_phase_neighborhood: '探索可达的双相邻域',
+          uniform_coverage: '均匀覆盖',
+          uncertainty_and_coverage: '分类不确定与覆盖距离',
+        }[reason] ||
+        reason ||
+        '见冻结选点记录'
+      );
+    },
     basis(v) {
       return { estimated: '估计', measured: '实测', unavailable: '无有效依据' }[v] || '未知';
     },
@@ -164,10 +218,13 @@
     chooseProject(id) {
       if (this.projectId === id) return;
       this.projectId = id;
+      this.continuationRunId = null;
       this.modules.forEach((m) => m.projectChanged?.());
       this.render();
     },
     render() {
+      if (!this.continuationRun() && this.continuationRuns().length)
+        this.continuationRunId = this.continuationRuns().at(-1).id;
       this.options(
         this.projectSelect,
         (this.state.projects || []).map((p) => [
