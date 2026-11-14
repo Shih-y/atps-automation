@@ -16,11 +16,12 @@ class ServiceTests(unittest.TestCase):
   self.s.data['bottles'][0]['sample_id']='a';self.s.handle('stop',{});self.assertEqual(self.c.stopped,1);self.assertEqual(self.s.snapshot()['bottles'][0]['sample_id'],'a')
  def test_export_and_snapshot_isolation(self):
   d=self.s.snapshot();d['stocks'].clear();self.assertTrue(self.s.snapshot()['stocks'])
-  z=zipfile.ZipFile(io.BytesIO(self.s.export_zip()));self.assertEqual(set(z.namelist()),{'data.json','samples.csv','report.html'})
+  z=zipfile.ZipFile(io.BytesIO(self.s.export_zip()));self.assertEqual(set(z.namelist()),{'data.json','samples.csv','report.html','metadata.json'})
  def test_bad_camera_rejected(self):
   with self.assertRaises(ValueError):self.s.handle('camera',dict(ready=True,rois=[]))
  def sample(self,status='settling'):
-  sample=dict(id='a',project_id='p',bottle=1,status=status,target={},recipe={},mixed_at=None,frames=[],label=None,exclusion='',generation=0)
+  sample=dict(id='a',project_id='p',bottle=1,status=status,target=dict(peg_fraction=.1,salt_fraction=.1),recipe={},mixed_at=None,frames=[],label=None,exclusion='',generation=0,
+              measured_composition=dict(peg_fraction=.1,salt_fraction=.1,method='synthetic independent assay',evidence='test fixture only'))
   self.s.data['samples'].append(sample);self.s.data['bottles'][0]['sample_id']='a';return sample
  def test_missing_id_valueerror(self):
   with self.assertRaises(ValueError):self.s._get('samples','absent')
@@ -59,7 +60,7 @@ class ServiceTests(unittest.TestCase):
  def test_two_round_feedback(self):
   self.project();a=self.sample();a['target']=dict(peg_fraction=.1,salt_fraction=.1);a['mixed_at']='2026-11-14T10:00:00+00:00';a['frames']=[dict(id='f',generation=0,settle_s=300)];self.s.handle('review',dict(sample_id='a',frame_id='f',clear=True,classification='single'))
   r=self.s.handle('suggest',dict(project_id='p',count=2,step=.1))['round'];self.assertEqual(r['training_ids'],['a']);self.assertFalse(r['model']['two_class_boundary'])
-  b=dict(a,id='b',target=dict(peg_fraction=.2,salt_fraction=.1),label=dict(frame_id='f',clear=True,classification='two_phase'));self.s.data['samples'].append(b)
+  b=dict(a,id='b',target=dict(peg_fraction=.2,salt_fraction=.1),measured_composition=dict(peg_fraction=.2,salt_fraction=.1,method='synthetic independent assay',evidence='test fixture only'),label=dict(frame_id='f',clear=True,classification='two_phase'));self.s.data['samples'].append(b)
   r2=self.s.handle('suggest',dict(project_id='p',count=2,step=.1))['round'];self.assertEqual(set(r2['training_ids']),{'a','b'});self.assertTrue(r2['model']['two_class_boundary']);self.assertNotEqual(r['id'],r2['id'])
  def test_released_capture_rejected(self):
   a=self.sample('released');self.s.data['camera'].update(ready=True,heartbeat=__import__('time').time());self.s.data['photo_jobs'].append(dict(id='j',sample_id='a',status='cancelled',generation=0))

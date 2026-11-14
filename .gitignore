@@ -2,6 +2,7 @@
 program/data/
 program/build/
 program/dist/
+program/build_info.json
 **/test_output/
 **/__pycache__/
 *.py[cod]

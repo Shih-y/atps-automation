@@ -48,6 +48,23 @@ def configure_logging(data_dir, port):
     return logger
 
 
+def shutdown(controller, server, thread):
+    """Release hardware before storage/logging; attempt every cleanup stage."""
+    failures = []
+    for name, operation in [('disconnect', controller.disconnect),
+                            ('http shutdown', server.shutdown),
+                            ('archive and close', server.server_close),
+                            ('http thread join', lambda: thread.join(3))]:
+        try:
+            operation()
+        except Exception as error:
+            failures.append((name, str(error)))
+    try:
+        logging.info('desktop shutdown; cleanup errors=%s', failures)
+    except Exception:
+        pass
+
+
 def allow_camera(window, origin):
     """Grant WebView2 camera access for the app's exact loopback origin.
 
@@ -144,14 +161,7 @@ def main():
         report_fatal(f'桌面窗口启动失败：{exc}\n\n日志：{data_dir / "desktop.log"}')
         return 1
     finally:
-        logging.info('desktop shutdown')
-        server.shutdown()
-        server.server_close()
-        thread.join(3)
-        try:
-            controller.disconnect()
-        except Exception:
-            logging.exception('disconnect during shutdown failed')
+        shutdown(controller, server, thread)
     return 0
 
 

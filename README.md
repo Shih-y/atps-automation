@@ -65,6 +65,7 @@
 
 ## 文档与测试
 
+- [11月14日完整修复与验收说明](docs/2026-11-14_修复与验收说明.txt)
 - [本次建议落实与操作说明](docs/reference/2026-11-13_建议落实与操作说明.txt)
 - [当前控制接口](program/docs/API.md)
 - [图像算法说明](docs/reference/图像算法说明_2026-11-13.txt)
@@ -92,7 +93,9 @@ python -m pip install -r requirements.txt -r requirements-desktop.txt
 python build_windows.py
 ```
 
-输出 `program/dist/ATPS-Automation.exe`（PyInstaller onefile，含网页、默认配置和 pyserial），并打印 SHA256。推送任意 tag 会触发 `.github/workflows/release.yml`：先运行测试，再构建单文件程序，创建 GitHub Release 并上传 exe 与 `SHA256SUMS.txt`。
+输出 `program/dist/ATPS-Automation.exe`（含网页、默认配置和 pyserial）与同名 `.exe.config`，并打印 SHA256。推荐下载 Windows ZIP 并完整解压，保留两个文件相邻；配置仅供本程序的 .NET 依赖加载，不修改系统策略。`build_info.json`记录源码提交号。推送 tag 会触发 `.github/workflows/release.yml`：先运行后端、判相和浏览器回归，再构建并验收实际EXE，上传程序包、构建信息与 `SHA256SUMS.txt`。
+
+本次修复增加数据库异常下优先停止、按项目冻结批次、统一采用组成、延迟人工复核、严格限定项目导出及结构化训练资格。旧数据库升级前自动备份；旧标定保留为试用，不追认实验精度。六页前端已拆为独立模块，所有保存操作支持幂等重试。
 
 可选浏览器测试需要 Node.js、Playwright 和标准位置安装的 Microsoft Edge。操作见 [`program/tests/browser/说明.txt`](program/tests/browser/说明.txt)。测试使用专用假服务端口 8879 或随机本地端口，不要将浏览器测试指向控制实物的 8765 服务。
 

@@ -23,3 +23,9 @@ experiment_live_frame.js：启动专用8879假硬件服务，以canvas.captureSt
 验证实时取帧桥、五瓶映射、两瓶独立定时成像与真实HTTP存档。不请求实际摄像头。
 通过 PLAYWRIGHT_MODULE 指定Playwright包；PYTHON指定Python解释器；EDGE_PATH可覆盖Edge路径。
 这些测试与integrated_console.js串行运行，不能同时占用8879，更不能指向实物8765。
+
+2026-11-14 完整性修复：experiment_console.js增加项目范围、采用组成、迟复核、
+逐任务拍照失败、请求响应丢失后幂等重试、候选估计坐标及当前项目空选导出回归。
+desktop_smoke.js直接启动构建后的EXE，以隔离数据目录验收六页、合成相机、导出和关闭。
+ATPS_EXE可指定待验收EXE；ATPS_TEST_TEMP_ROOT可指定测试专用的可写临时目录。
+测试会关闭自己创建的EXE进程树，不会关闭其他程序。新发布流水线包含此验收。

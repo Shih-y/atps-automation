@@ -20,10 +20,11 @@ class AirControllerTest(unittest.TestCase):
         self.tmp.cleanup()
     def run_action(self,payload,prime_choice='reached'):
         self.c.start(payload); deadline=time.monotonic()+5
+        seen_prompts=set()
         while self.c.busy and time.monotonic()<deadline:
             s=self.c.snapshot()
-            if s['prompt']:
-                p=s['prompt']; self.c.acknowledge({'id':p['id'],'choice':prime_choice if p['kind']=='prime_front' else 'confirm'})
+            if s['prompt'] and s['prompt']['id'] not in seen_prompts:
+                p=s['prompt']; seen_prompts.add(p['id']); self.c.acknowledge({'id':p['id'],'choice':prime_choice if p['kind']=='prime_front' else 'confirm'})
             time.sleep(.005)
         self.assertFalse(self.c.busy)
         return self.c.snapshot()

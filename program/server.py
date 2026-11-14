@@ -38,10 +38,11 @@ class Server(ThreadingHTTPServer):
 
     def server_close(self):
         lab=getattr(self,'lab',None)
-        if lab:
-            lab.close()
-            if getattr(self.controller,'lab',None) is lab:self.controller.lab=None
-        super().server_close()
+        try:
+            if lab:lab.close()
+        finally:
+            if lab is not None and getattr(self.controller,'lab',None) is lab:self.controller.lab=None
+            super().server_close()
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self,*args): pass
@@ -73,6 +74,9 @@ class Handler(BaseHTTPRequestHandler):
             if path=='/api/lab/export':
                 project_id=parse_qs(urlsplit(self.path).query).get('project_id',[None])[0]
                 return self.reply(self.server.lab.export_zip(project_id),mime='application/zip',filename='ATPS-experiment-export.zip')
+            if path.startswith('/api/lab/backup/'):
+                backup_id=path.removeprefix('/api/lab/backup/')
+                return self.reply(self.server.lab.backup_path(backup_id).read_bytes(),mime='application/zip',filename='ATPS-project-backup.zip')
             if path.startswith('/api/lab/image/'):
                 image_id=path.removeprefix('/api/lab/image/')
                 if '/' in image_id or '%' in image_id or '..' in image_id:raise ValueError('图像ID无效')
@@ -82,7 +86,8 @@ class Handler(BaseHTTPRequestHandler):
                 if len(parts)!=5: raise ValueError('图片路径无效')
                 return self.reply(c.capture.image_path(parts[3],parts[4]).read_bytes(),mime='image/png')
             if path in ('/','/index.html'): return self.reply((self.server.static/'index.html').read_bytes(),mime='text/html; charset=utf-8')
-            if path in ('/app.js','/bench.js','/live.js','/tubes.js','/free.js','/style.css','/console.js','/console.css','/phase_analysis.js','/lab.js','/lab.css'):
+            if path in ('/app.js','/bench.js','/live.js','/tubes.js','/free.js','/style.css','/console.js','/console.css','/phase_analysis.js','/lab.js','/lab.css',
+                        '/lab-equipment.js','/lab-design.js','/lab-monitor.js','/lab-review.js','/lab-model.js','/lab-data.js'):
                 mime='text/javascript; charset=utf-8' if path.endswith('.js') else 'text/css; charset=utf-8'
                 return self.reply((self.server.static/path[1:]).read_bytes(),mime=mime)
             return self.reply({'ok':False,'error':'未找到'},404)
@@ -108,7 +113,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(self.server.lab.handle(path.removeprefix('/api/lab/'),body))
             if path=='/api/connect': c.connect(body.get('mode','real'),body.get('pump_port',body.get('port','')),body.get('valve_port',body.get('port','')),auto_detect=body.get('auto_detect',False))
             elif path=='/api/disconnect':
-                self.server.lab.handle('pause',{});c.disconnect()
+                try:self.server.lab.handle('stop',{})
+                finally:c.disconnect()
             elif path=='/api/stop': self.server.lab.handle('stop',{})
             elif path=='/api/config': c.configure(body.get('config'))
             elif path=='/api/calibration/report': return self.reply(c.calibration_report(body))
@@ -139,6 +145,7 @@ def main():
     try: server.serve_forever()
     except KeyboardInterrupt: pass
     finally:
-        controller.disconnect(); server.server_close()
+        try:controller.disconnect()
+        finally:server.server_close()
 
 if __name__=='__main__': main()

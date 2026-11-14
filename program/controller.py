@@ -123,6 +123,7 @@ class Controller(BenchMixin, TubeMixin, FreeDebugMixin):
         self.hardware = None; self.hardware_factory = hardware_factory
         self.mode = 'real'; self.connected = False; self.busy = False; self.worker = None
         self._user_stopping=False
+        self.stop_status='unknown'
         self.state = 'DISCONNECTED'; self.message = '扫描 CH340 或手动选择串口，连接后选择要执行的步骤。程序启动不连接或驱动设备。'
         self.prompt = None; self.answer = None; self.logs = []; self.commission_count = 0
         self.capture = CaptureStore(self.directory); self.capture.archive()
@@ -158,7 +159,7 @@ class Controller(BenchMixin, TubeMixin, FreeDebugMixin):
     def snapshot(self):
         with self.lock:
             return copy.deepcopy(dict(mode=self.mode,free_debug=self.free_debug,connected=self.connected,busy=self.busy or self._user_stopping,state=self.state,
-                message=self.message,next_step=self.prompt['message'] if self.prompt else self.message,prompt=self.prompt,
+                message=self.message,stop_status=self.stop_status,next_step=self.prompt['message'] if self.prompt else self.message,prompt=self.prompt,
                 common=self.common,reset_sequence=self.reset_sequence,pending_plug=self._pending_view(),selected_port=self.selected_port,
                 sources=self.sources,samples=self.samples,logs=self.logs,
                 config=self.config,geometry_signature=signature(self.config),profiles=self.profiles(),imaging=self.capture.current,
@@ -260,52 +261,67 @@ class Controller(BenchMixin, TubeMixin, FreeDebugMixin):
             self.connected=False
 
     def stop_keep_connection(self):
-        """Cancel the task, confirm stopping, then reuse the same open serial port."""
-        with self.lock:
-            if self._user_stopping:return
-            if not self.connected or not self.hardware:
-                self.stop();return
-            self._user_stopping=True
-            self.cancel.set();self.ack_event.set();self.prompt=None
-            self.state='STOPPING';self.message='正在停止并核对设备；保留串口连接。'
-            worker=self.worker;hardware=self.hardware
+        """Priority stop has no disk/logger/controller-lock prerequisites."""
+        if self._user_stopping:
+            return
+        self._user_stopping=True
+        self.cancel.set();self.ack_event.set()
+        self.stop_status='requested';self.state='STOPPING'
+        self.message='已请求停止，正在核对设备状态。'
+        hardware=self.hardware
         try:
+            if hardware is None:
+                self.stop_status='unconfirmed';self.state='DISCONNECTED'
+                self.message='设备未连接，无法核对物理停止状态。'
+                return
             hardware.stop()
+            # A start that passed its guard before this stop may still be
+            # publishing its worker under self.lock. Capture it AFTER sending
+            # the priority stop, then join without holding that lock.
+            with self.lock:worker=self.worker
             if worker and worker is not threading.current_thread():
                 worker.join(5)
-                if worker.is_alive():raise HardwareError('当前任务未及时退出，停止状态未恢复')
+                if worker.is_alive():raise HardwareError('当前任务未及时退出，无法确认停止')
             hardware.recover_after_stop()
             with self.lock:
                 cancelled_recipe=self.recipe_run if self.recipe_run and not self.recipe_run['completed'] else None
                 if cancelled_recipe:cancelled_recipe.update(cancelled=True,completed=False,finished_at=timestamp())
-                self._unknown();self.cancel.clear();self.busy=False
-                self.recipe_run=cancelled_recipe
-                self.state='STOPPED';self.connected=True
-                self.message='已确认停止，串口连接保留。当前任务已取消，可直接执行下一项操作。'
-            self.capture.archive()
-            self.log('user_stop_confirmed_connection_retained',port=self.config.get('communication',{}).get('port'),task_resumed=False)
-        except Exception:
-            self.stop()
+                self._unknown();self.cancel.clear();self.busy=False;self.prompt=None
+                self.recipe_run=cancelled_recipe;self.connected=True
+                self.state='STOPPED';self.stop_status='confirmed'
+                self.message='已确认停止，串口连接保留；旧任务不会续跑。'
+        except Exception as exc:
+            self.stop_status='unconfirmed';self.state='FAULT';self.connected=False
+            self.message='无法确认停止：'+str(exc)
+            try:
+                if hardware:hardware.stop()
+            except Exception:pass
             raise
         finally:
-            with self.lock:self._user_stopping=False
+            self._user_stopping=False
+            try:self.capture.archive()
+            except Exception:pass
+            try:self.log('user_stop_result',stop_status=self.stop_status,task_resumed=False)
+            except Exception:pass
 
     def stop(self):
         self.cancel.set(); self.ack_event.set()
+        self.stop_status='requested'
+        try:
+            if self.hardware:self.hardware.stop()
+        except Exception:
+            self.stop_status='unconfirmed'
         with self.lock:
             interrupted_plug=copy.deepcopy(self.pending_plug)
             cancelled_recipe=self.recipe_run if self.recipe_run and not self.recipe_run['completed'] else None
             if cancelled_recipe:cancelled_recipe.update(cancelled=True,completed=False,finished_at=timestamp())
-            self.prompt=None; self.state='STOPPED'; self.message='已请求软件停止；请确认设备确已停止。流路状态未知，重新连接后复位。'; self._unknown(); self.connected=False
+            self.prompt=None; self.state='STOP_REQUESTED'; self.message='已请求软件停止；请确认设备确已停止。流路状态未知，重新连接后复位。'; self._unknown(); self.connected=False
             self.recipe_run=cancelled_recipe
-        try:
-            if self.hardware: self.hardware.stop()
-        finally:
-            # Disk failures must never prevent the priority stop request.
-            try: self.capture.archive()
-            except Exception: pass
-            try: self.log('stop_requested_physical_stop_unconfirmed',interrupted_plug=interrupted_plug)
-            except Exception: pass
+        # Disk failures must never prevent the priority stop request.
+        try: self.capture.archive()
+        except Exception: pass
+        try: self.log('stop_requested_physical_stop_unconfirmed',interrupted_plug=interrupted_plug)
+        except Exception: pass
 
     def _check(self):
         if self.cancel.is_set(): raise HardwareError('操作被停止；需要重新连接')
@@ -344,11 +360,13 @@ class Controller(BenchMixin, TubeMixin, FreeDebugMixin):
 
     def _pulse(self, port, direction, p, commissioning=False, before_move=None, manual_direction=False):
         pulse_checked(p,commissioning,air_purge=(port==16 and direction=='aspirate'))
+        number(p['rpm'],.1,self.config['pump'].get('max_rpm',100),'配置允许转速')
         if type(port) is not int or port not in ALLOWED_PORTS: raise ValueError('端口无效；7—9禁用')
         if direction not in ('aspirate','dispense'): raise ValueError('方向无效')
         if not manual_direction:
             if direction == 'dispense' and port not in range(1,7): raise ValueError('反向只允许送向1—6样品口')
             if direction == 'aspirate' and port in range(1,7): raise ValueError('禁止从样品抽吸进入公共管')
+        self._notify_manual_motion()
         self._check(); self.movement_attempted=True; timed_out=threading.Event()
         def timeout():
             timed_out.set(); self.cancel.set()
@@ -373,6 +391,7 @@ class Controller(BenchMixin, TubeMixin, FreeDebugMixin):
     def _select_port(self,port):
         if type(port) is not int or port not in ALLOWED_PORTS: raise ValueError('端口无效；7—9禁用')
         timeout_s=number(self.config['valve'].get('timeout'),1,120,'选口超时秒数')
+        self._notify_manual_motion()
         self._check(); self.movement_attempted=True
         def timeout():
             self.cancel.set()
@@ -619,11 +638,13 @@ class Controller(BenchMixin, TubeMixin, FreeDebugMixin):
             if not isinstance(payload,dict): raise ValueError('操作必须为对象')
             if not self.connected or self.cancel.is_set(): raise ValueError('先连接；停止锁定后必须重新连接')
             if self.busy: raise ValueError('已有操作执行或等待确认；请完成当前步骤')
+            if payload.get('action')=='experiment_recipe' and hasattr(getattr(self,'lab',None),'dispatch_allowed'):
+                if not self.lab.dispatch_allowed(payload.get('experiment_sample_id')):
+                    raise ValueError('该自动任务已暂停、停止或不属于当前项目')
             self._pending_guard(payload)
             if not self.free_debug and self.capture.pending and payload.get('action') not in ('clear',): raise ValueError('先完成或明确放弃当前图像批次，再开始新的液路操作')
             payload=copy.deepcopy(payload)
-            if getattr(self,'lab',None) and payload.get('action')!='experiment_recipe':
-                self.lab.before_manual(payload)
+            self._manual_notified=False
             self.busy=True; self.movement_attempted=False
             def worker():
                 self._active_payload=payload
@@ -656,6 +677,12 @@ class Controller(BenchMixin, TubeMixin, FreeDebugMixin):
                 finally:
                     with self.lock: self.busy=False; self.prompt=None; self._active_payload=None
             self.worker=threading.Thread(target=worker,daemon=True); self.worker.start()
+
+    def _notify_manual_motion(self):
+        payload=getattr(self,'_active_payload',None) or {}
+        if getattr(self,'lab',None) and not getattr(self,'_manual_notified',False) and payload.get('action')!='experiment_recipe':
+            self.lab.before_manual(payload)
+            self._manual_notified=True
 
     def _lab_event(self,event,payload=None,plan=None,error=None):
         lab=getattr(self,'lab',None)

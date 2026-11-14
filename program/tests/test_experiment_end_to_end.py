@@ -22,7 +22,9 @@ class ClosedLoopTests(unittest.TestCase):
         self.lab=ExperimentService(self.c);self.c.lab=self.lab;self.c.connect()
         for source in (13,14,15):
             self.lab.handle('calibration',dict(source=source,groups_g=[.75,.74,.76],doses_per_group=5,
-                aspirate_steps=45,aspirate_rpm=5,chase_steps=1000,chase_rpm=15,note='synthetic fixture only'))
+                aspirate_steps=45,aspirate_rpm=5,chase_steps=1000,chase_rpm=15,note='synthetic fixture only',
+                status='validated',min_steps=1,max_steps=45,sample_bottles=[1,2,3,4,5],
+                validation_evidence='synthetic range study only',bottle_scope_evidence='synthetic cross-bottle study only'))
         self.p=self.lab.handle('project',dict(name='synthetic test',salt_port=13,total_mass_g=.15,
             safe_mass_limit_g=1,temperature_c=25,photo_offsets_s=[0],min_settle_s=0,max_observe_s=1800))['project']
         self.rois=[dict(sample=i,x=(5-i)*20,y=0,width=20,height=40) for i in range(1,6)]
@@ -54,7 +56,7 @@ class ClosedLoopTests(unittest.TestCase):
         return job,frame
     def test_two_rounds_include_real_controller_execution_and_idempotent_image(self):
         self.lab.handle('enqueue',dict(project_id=self.p['id'],recipes=[dict(peg_fraction=.04,salt_fraction=.04)]))
-        self.lab.handle('start',{})
+        self.lab.handle('start',dict(project_id=self.p['id']))
         first=self.wait_for(lambda s:s['samples'][0]['status']=='settling')
         self.assertTrue(first['samples'][0]['progress']['completed'])
         job,frame=self.capture_review('single')
@@ -65,7 +67,7 @@ class ClosedLoopTests(unittest.TestCase):
         self.assertEqual(1,len(round1['training_ids']))
         self.assertFalse(round1['model']['two_class_boundary'])
         self.lab.handle('approve',dict(round_id=round1['id'],indices=[0]))
-        self.heartbeat();self.lab.handle('start',{})
+        self.heartbeat();self.lab.handle('start',dict(project_id=self.p['id']))
         second=self.wait_for(lambda s:len([x for x in s['samples'] if x['status']=='settling'])==2)
         self.assertEqual(2,second['samples'][1]['bottle'])
         self.capture_review('two_phase')

@@ -58,8 +58,14 @@
   },'连接请求已完成；实际串口见设备连接状态。');
   bind('disconnectBtn',()=>api('/api/disconnect',{}),'已请求断开，设备状态以服务读回为准。');
   $('stopBtn').addEventListener('click',async()=>{
-    ++epoch;notice('正在优先发送停止请求；等待设备确认。');
-    try{const result=await api('/api/stop',{});if(result.state)state=result.state;render();notice('停止请求已处理；请核对泵读回。确认停止后保留串口连接。');}catch(e){notice('停止未得到确认：'+e.message,true);}
+    ++epoch;
+    const announce=status=>{window.dispatchEvent(new CustomEvent('atps:stop-status',{detail:status}));$('runStatus').textContent=({requested:'已请求停止',confirmed:'已确认停止',unconfirmed:'无法确认停止'})[status];};
+    announce('requested');notice('已请求停止；等待设备读回确认。');
+    try {
+      const result=await api('/api/stop',{});if(result.state)state=result.state;render();
+      const status=state.stop_status==='confirmed'?'confirmed':state.stop_status==='requested'?'requested':'unconfirmed';
+      announce(status);notice(status==='confirmed'?'已确认停止；设备连接保留。':status==='requested'?'已请求停止，尚未确认。':'无法确认停止；请核对设备读回与实体急停。',status==='unconfirmed');
+    } catch(e) {announce('unconfirmed');notice('无法确认停止：'+e.message,true);}
   });
   bind('manualSelect',()=>action('select_port',{port:Number($('manualPort').value)}));
   bind('manualRead',()=>action('read_status'));
@@ -109,7 +115,7 @@
   }
   function render() {
     $('connectionStatus').textContent=state.connected?`${state.config?.communication?.port || '串口未知'} · 泵阀共用 RS485`:'未连接';
-    $('runStatus').textContent=state.busy?'执行中':state.state==='FAULT'?'操作异常':state.connected?'已连接 · 待操作':'未连接';
+    $('runStatus').textContent=state.state==='STOPPING'?'已请求停止':state.state==='STOPPED'&&state.stop_status==='confirmed'?'已确认停止':state.stop_status==='unconfirmed'&&state.state==='FAULT'?'无法确认停止':state.busy?'执行中':state.state==='FAULT'?'操作异常':state.connected?'已连接 · 待操作':'未连接';
     $('serverMessage').textContent=state.message || '';
     if(state.connected)$('serialStatus').textContent=`实际连接 ${state.config?.communication?.port || '未知串口'}；连接与泵运动状态分别显示。`;
     renderTelemetry();preview();

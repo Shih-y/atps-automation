@@ -35,12 +35,21 @@ class FreeDebugMixin:
         from controller import number,pulse_checked
         value=payload.get('debug_parameters',{})
         if not isinstance(value,dict): raise ValueError('调试参数须为对象')
-        p=dict(source=value.get('source',15),sample=value.get('sample',1),
+        for key,lo,hi in (('source',10,15),('sample',1,6)):
+            if key in payload:number(payload[key],lo,hi,key,True)
+            if key in value:number(value[key],lo,hi,key,True)
+            if key in payload and key in value and payload[key]!=value[key]:
+                raise ValueError('顶层与调试参数中的%s不一致' % key)
+        p=dict(source=value.get('source',payload.get('source',15)),sample=value.get('sample',payload.get('sample',1)),
                aspirate=value.get('aspirate',dict(steps=45,rpm=5,timeout_s=20)),
                chase=value.get('chase',dict(steps=1000,rpm=15,timeout_s=35)),
                bubble=value.get('bubble',dict(steps=20,rpm=5,timeout_s=10)))
         number(p['source'],10,15,'来源口',True);number(p['sample'],1,6,'样品口',True)
         for key in ('aspirate','chase','bubble'):p[key]=pulse_checked(p[key])
+        used={'aspirate':['aspirate'],'chase':['chase'],'dose':['aspirate','chase'],
+              'bubble':['bubble']}.get(payload.get('action'),['aspirate','chase','bubble'])
+        if payload.get('bubble') is True and 'bubble' not in used:used=used+['bubble']
+        for key in used:number(p[key]['rpm'],.1,self.config['pump']['max_rpm'],'配置允许转速')
         return p
 
     def _debug_delivery(self,p,action,bubble=False):
@@ -175,7 +184,11 @@ class FreeDebugMixin:
         if action=='stock_calibration':
             self.recipe_run=None;self.volume_run=None
             plan=self._stock_calibration_plan(payload)
-        if action in ('aspirate','chase','dose','bubble'):p=self._debug_parameters(payload)
+        if action in ('aspirate','chase','dose','bubble'):
+            p=self._debug_parameters(payload)
+            # The controller's active payload and completion callbacks reference
+            # this dict. Persist the resolved endpoint before any disturbance.
+            payload.update(sample=p['sample'],source=p['source'],debug_parameters=copy.deepcopy(p))
         if action=='run':
             raise ValueError('旧调试队列已停用；请使用recipe单瓶配方，所有组分完成后统一混合和吹扫')
         if action in ('wash','purge','reset','discard_loaded'):

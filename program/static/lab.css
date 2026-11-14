@@ -1,2 +1,27 @@
-nav{display:flex;flex-wrap:wrap;gap:8px;padding:12px;background:#eee}nav p{flex-basis:100%;margin:0}.lab-page[hidden]{display:none}.lab-page form{display:flex;flex-wrap:wrap;gap:12px;padding:16px;border:1px solid #bbb;margin:12px 0}.lab-page label{display:flex;flex-direction:column;gap:6px}.lab-page pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f4f4;padding:16px;max-height:650px;overflow:auto}#lab-status{position:sticky;bottom:0;background:#222;color:white;padding:12px;font-size:13px;z-index:10}.lab-page textarea{display:block;width:95%;height:100px}.lab-page canvas{max-width:100%;border:1px solid #aaa}
-#lab-status button{color:#111;background:#fff;margin-left:12px}.lab-page{padding:0 24px 24px}.lab-page>h2{margin-top:20px}.lab-page>button{margin:8px 8px 8px 0}.lab-page table{width:100%}.lab-page a img{display:block;margin:8px}.lab-page form label{max-width:240px;flex:1 1 170px}.lab-page form input,.lab-page form select{width:100%;min-width:0}.lab-page input[type=checkbox]{width:auto;align-self:flex-start}.lab-page>select{margin:12px 0}
+#lab-nav{display:flex;flex-wrap:wrap;gap:7px;padding:12px 24px;background:#f0f0f0;border-bottom:1px solid #bbb}
+#lab-nav button{border:1px solid #aaa;background:#fff;color:#222;padding:9px 15px}
+#lab-nav button[aria-current=true]{background:#252525;color:#fff;border-color:#252525}
+#lab-message{flex-basis:100%;margin:0;font-size:14px;min-height:20px;white-space:pre-wrap}
+#lab-message.error{font-weight:700;color:#111;border-left:4px solid #555;padding-left:10px}
+.lab-project{padding:12px 24px;border-bottom:1px solid #ccc;background:#fafafa;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.lab-project label{display:flex;gap:10px;align-items:center}.lab-project p{margin:0;font-size:13px}
+.lab-page{width:100%;min-width:0;padding:16px 24px 80px}.lab-page[hidden]{display:none!important}
+.lab-page .card{margin:0 0 18px}.lab-page h2{font-size:20px;margin:0 0 12px}
+.lab-page button{margin:5px 8px 5px 0}.lab-page .lab-form{display:flex;flex-wrap:wrap;gap:14px;align-items:end;margin:14px 0;padding:15px;background:#fafafa;border:1px solid #d4d4d4}
+.lab-form label{display:flex;flex-direction:column;gap:5px;flex:1 1 180px;max-width:300px;font-size:14px;min-width:130px}
+.lab-form input,.lab-form select{width:100%;min-width:0;padding:8px;border:1px solid #aaa;background:#fff;border-radius:4px}
+.lab-form input[type=checkbox]{width:auto;align-self:flex-start;min-height:20px}
+.lab-page select{max-width:100%;padding:8px}.lab-page textarea{display:block;width:100%;min-height:110px;padding:10px;border:1px solid #aaa}
+.lab-page .table-scroll{max-width:100%;overflow:auto;margin:12px 0}.lab-page table{width:100%;border-collapse:collapse;font-size:13px}
+.lab-page th,.lab-page td{border:1px solid #d3d3d3;padding:9px;text-align:left;vertical-align:top}.lab-page th{background:#efefef;font-weight:600}
+.lab-page canvas{max-width:100%;height:auto;border:1px solid #aaa}.lab-page pre{white-space:pre-wrap;overflow-wrap:anywhere}
+.lab-gallery{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:15px;align-items:start}
+.lab-gallery figure{margin:0;padding:10px;border:1px solid #bbb;max-width:460px;background:#fafafa}.lab-gallery figcaption{font-size:13px;margin-bottom:10px}
+.lab-gallery img{width:100%;height:100px;object-fit:contain;background:#eee}.lab-gallery canvas{display:block;max-height:250px;width:auto;margin:10px auto}
+.lab-gallery p{font-size:12px}.candidate-list{width:100%;display:grid;gap:8px}.candidate-list label{max-width:none;flex-direction:row;align-items:center}
+#lab-status{position:fixed;bottom:0;left:0;right:0;display:flex;gap:12px;justify-content:space-between;align-items:center;background:#252525;color:#fff;padding:10px 24px;font-size:13px;z-index:30;box-shadow:0 -2px 8px #0002}
+#lab-status button{color:#111;background:#fff;border:1px solid #ccc;white-space:nowrap;margin:0;font-weight:bold;flex-shrink:0}
+#export-project{display:inline-block;padding:9px 13px;border:1px solid #888;border-radius:4px;margin-right:10px}
+#phase-diagram{display:block;background:white;width:100%;max-width:1000px}
+.candidate-description{white-space:pre-line;line-height:1.7}.candidate-list label{padding:10px 0;border-bottom:1px solid #ddd}.candidate-list input[type=checkbox]{flex-shrink:0;width:18px}
+@media(max-width:760px){.lab-page{padding:12px 10px 120px}.lab-project,#lab-nav{padding:10px}.lab-project{align-items:start}#lab-status{padding:8px 10px;font-size:11px}.lab-form label{max-width:none}.lab-gallery{grid-template-columns:1fr}}
