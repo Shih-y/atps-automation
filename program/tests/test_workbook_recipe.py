@@ -26,7 +26,7 @@ class WorkbookRecipeTests(unittest.TestCase):
         run = self.run_recipe(items=[dict(source=14, volume_ml=1.), dict(source=13, volume_ml=.3)])
         moves = self.c.hardware.moves
         self.assertEqual([14, 2, 14, 2, 13, 2, 2, 16], [m['port'] for m in moves])
-        self.assertEqual([150, 1105, 150, 1105, 90, 1045, 20], [m['steps'] for m in moves[:-1]])
+        self.assertEqual([150, 2105, 150, 2105, 90, 2045, 20], [m['steps'] for m in moves[:-1]])
         self.assertEqual('dispense', moves[-2]['direction'])
         self.assertEqual(15, moves[-1]['turns'])
         self.assertTrue(run['completed'])

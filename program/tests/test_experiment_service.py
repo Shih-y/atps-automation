@@ -16,7 +16,7 @@ class ServiceTests(unittest.TestCase):
   self.s.data['bottles'][0]['sample_id']='a';self.s.handle('stop',{});self.assertEqual(self.c.stopped,1);self.assertEqual(self.s.snapshot()['bottles'][0]['sample_id'],'a')
  def test_export_and_snapshot_isolation(self):
   d=self.s.snapshot();d['stocks'].clear();self.assertTrue(self.s.snapshot()['stocks'])
-  z=zipfile.ZipFile(io.BytesIO(self.s.export_zip()));self.assertEqual(set(z.namelist()),{'data.json','samples.csv','report.html','metadata.json'})
+  z=zipfile.ZipFile(io.BytesIO(self.s.export_zip()));self.assertEqual(set(z.namelist()),{'data.json','samples.csv','report.html','metadata.json','additions.csv','observations.csv','action_events.csv','tie_lines.csv'})
  def test_bad_camera_rejected(self):
   with self.assertRaises(ValueError):self.s.handle('camera',dict(ready=True,rois=[]))
  def sample(self,status='settling'):

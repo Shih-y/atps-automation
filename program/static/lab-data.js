@@ -67,10 +67,25 @@ window.ATPSLabPages.data = (ctx, page) => {
     { className: 'muted' },
   );
   const rows = ctx.node('div', null, card);
+  const tieCard=ctx.card(page,'系线：录入独立分析结果','照片只提供相态候选，不能推算上下相组成。仅在完成独立组分分析后录入；此记录不会替换整瓶预计组成。');
+  const tieSample=ctx.node('select',null,tieCard,{id:'tie-line-sample','aria-label':'系线对应样品'});
+  ctx.form(tieCard,[['upper_peg','上相 PEG / %',''],['upper_salt','上相盐 / %',''],
+    ['lower_peg','下相 PEG / %',''],['lower_salt','下相盐 / %',''],
+    ['method','独立分析方法',''],['evidence','分析报告或证据编号','']],
+    '保存独立相组成记录',async(d,requestId)=>{
+      if(!tieSample.value)throw Error('请选择已完成配液的样品');
+      const fraction=key=>{if(!String(d[key]).trim())throw Error('上下相组成不能留空');const n=Number(d[key])/100;if(!Number.isFinite(n)||n<0||n>1)throw Error('组成应在0—100%之间');return n;};
+      await ctx.api('tie_line',{sample_id:tieSample.value,upper:{peg_fraction:fraction('upper_peg'),salt_fraction:fraction('upper_salt')},
+        lower:{peg_fraction:fraction('lower_peg'),salt_fraction:fraction('lower_salt')},method:d.method,evidence:d.evidence,request_id:requestId});
+      ctx.tell('独立相组成已保存；未改写整瓶预计组成，未启动泵。');
+    },'tie-line-form');
   function render() {
     const current = scope.value === 'current',
       samples = (ctx.state.samples || []).filter((s) => !current || s.project_id === ctx.projectId),
       ids = new Set(samples.map((s) => s.id));
+    const selected=tieSample.value;
+    ctx.options(tieSample,samples.filter(s=>s.mixed_at&&['settling','observation_complete'].includes(s.status)).map(s=>[s.id,ctx.sampleName(s)]));
+    if([...tieSample.options].some(o=>o.value===selected))tieSample.value=selected;
     const projects = (ctx.state.projects || []).filter((p) => !current || p.id === ctx.projectId),
       rounds = (ctx.state.rounds || []).filter((r) => !current || r.project_id === ctx.projectId),
       jobs = (ctx.state.photo_jobs || []).filter((j) => ids.has(j.sample_id));

@@ -56,17 +56,31 @@ def theoretical_addition(request, inventory, stocks):
     A nonempty bottle uses the smallest reachable final mass unless the caller
     explicitly supplies `final_mass_g`. Physical unreachability returns issues;
     malformed requested fractions and limits raise ValueError.
+
+    `min_initial_mass_g` floors the seed; `reserve_mass_g` retains headroom
+    only for an initially empty bottle. `source_mass_remaining_g` maps string
+    source ports to budgets (omitted ports are unlimited). All three default
+    to no added restriction. Missing capacity retains theory, never execution.
     """
     salt_port = domain.integer(request['salt_port'], 10, 13)
     peg, salt = domain._coordinate_pair(request)
     limit = request.get('safe_mass_limit_g')
     limit = domain.num(limit, 1e-6, 10) if limit is not None else None
     budget = domain.num(request.get('max_added_mass_g', 10000), 0, 10000)
+    initial_floor = domain.num(request.get('min_initial_mass_g', 0), 0, 10)
+    reserve = domain.num(request.get('reserve_mass_g', 0), 0, 10)
+    source_budget = request.get('source_mass_remaining_g', {})
+    if not isinstance(source_budget, dict) or any(
+            key not in ('10','11','12','13','14','15') for key in source_budget):
+        raise ValueError('来源剩余质量须为来源端口字符串到质量的映射')
+    source_budget = {key:domain.num(value) for key,value in source_budget.items()}
     tolerance = domain.num(request.get('composition_tolerance_fraction', .01), 0, 1)
     target = dict(salt_port=salt_port, peg_fraction=peg, salt_fraction=salt,
                   temperature_c=request.get('temperature_c', 25),
                   safe_mass_limit_g=limit, composition_tolerance_fraction=tolerance,
-                  total_mass_g=None, allow_trial_calibration=request.get('allow_trial_calibration',True))
+                  total_mass_g=None, allow_trial_calibration=request.get('allow_trial_calibration',True),
+                  min_initial_mass_g=initial_floor, reserve_mass_g=reserve,
+                  source_mass_remaining_g=source_budget)
     result = dict(reachable=False, executable=False, issues=[], target=target,
                   initial_inventory=copy.deepcopy(inventory), inventory_key=inventory_key(inventory),
                   final_mass_g=None, theoretical_added_mass_g=None, added_mass_g=None,
@@ -79,13 +93,13 @@ def theoretical_addition(request, inventory, stocks):
         return result
     if limit is None:
         result['issues'].append('需要明确的安全最终总质量上限')
-        return result
     mass, pg, sg = (material[k] for k in ('total_mass_g','peg_mass_g','salt_mass_g'))
     cp, cs = ss[14]['mass_fraction'], ss[salt_port]['mass_fraction']
     denominator = 1-peg/cp-salt/cs
     remainder = mass-pg/cp-sg/cs
     lower = mass
-    upper = min(limit, mass+budget)
+    upper = min(limit-(reserve if mass<=EPS else 0) if limit is not None else math.inf,
+                mass+budget)
     if (peg == 0 and pg > EPS) or (salt == 0 and sg > EPS):
         result['issues'].append('已有溶质不能仅靠有限补加降为零质量分数')
         return result
@@ -101,13 +115,28 @@ def theoretical_addition(request, inventory, stocks):
         result['issues'].append('该目标需要负补水或移除瓶内物料，不能只靠补加达到')
         return result
     if mass <= EPS:
-        lower = max(lower, domain.num(request.get('seed_mass_g',request.get('total_mass_g',1)),1e-6,10))
+        lower = max(lower, initial_floor,
+                    domain.num(request.get('seed_mass_g',request.get('total_mass_g',1)),1e-6,10))
+    # Each source dose is affine in final mass. A decreasing water dose can
+    # impose a lower bound, as happens when diluting material richer than stocks.
+    for port,slope,intercept in ((14,peg/cp,-pg/cp),(salt_port,salt/cs,-sg/cs),
+                                 (15,denominator,-remainder)):
+        available = source_budget.get(str(port))
+        if available is None:
+            continue
+        if slope>EPS:
+            upper = min(upper,(available-intercept)/slope)
+        elif slope < -EPS:
+            lower = max(lower,(available-intercept)/slope)
+        elif intercept > available+EPS:
+            result['issues'].append('理论补量超出来源%s剩余质量预算' % port)
+            return result
     final = domain.num(request['final_mass_g'],1e-6,10) if 'final_mass_g' in request else lower
     if final < lower-EPS:
         result['issues'].append('指定最终质量会要求负补量；请增大最终质量')
         return result
     if final > upper+EPS:
-        result['issues'].append('理论最终质量超出安全容量或剩余补加质量预算')
+        result['issues'].append('理论最终质量超出安全容量、初始预留或剩余补加/来源质量预算')
         return result
     additions = {14:(peg*final-pg)/cp, salt_port:(salt*final-sg)/cs,
                  15:denominator*final-remainder}
@@ -115,12 +144,15 @@ def theoretical_addition(request, inventory, stocks):
         result['issues'].append('目标需要负补量，不能执行抽走物料来代替补加')
         return result
     additions = {port:0. if abs(value)<EPS else value for port,value in additions.items()}
+    if any(value > source_budget.get(str(port),math.inf)+EPS for port,value in additions.items()):
+        result['issues'].append('理论补量超出来源剩余质量预算')
+        return result
     added = sum(additions.values())
     if added <= EPS:
         result['issues'].append('目标与当前库存相同，没有补加动作；不会重复混合或建新实验点')
         return result
     target['total_mass_g'] = final
-    result.update(reachable=True, executable=True, final_mass_g=final,
+    result.update(reachable=True, executable=limit is not None, final_mass_g=final,
                   theoretical_added_mass_g=added, added_mass_g=added,
                   theoretical_additions_g=additions, stock_masses=copy.deepcopy(additions),
                   max_final_mass_g=upper)
@@ -222,7 +254,7 @@ def preview_addition(request, inventory, stocks, calibrations, geometry_signatur
         result['deviation'] = copy.deepcopy(result['composition']['deviation'])
         return result
 
-    if not theory['reachable']:
+    if not theory['reachable'] or not theory['executable']:
         return finish()
     salt_port = theory['target']['salt_port']
     ss = _stock_map(stocks,salt_port)
@@ -256,7 +288,7 @@ def preview_addition(request, inventory, stocks, calibrations, geometry_signatur
     tolerance = result['target']['composition_tolerance_fraction']
     best = None
     seen = set()
-    rejected_time = rejected_capacity = False
+    rejected_time = rejected_capacity = rejected_source = False
     for final in sorted(final_masses):
         ideal = {14:(peg*final-pg)/cp,salt_port:(salt*final-sg)/cs,15:d*final-k}
         if any(v < -EPS for v in ideal.values()):
@@ -275,6 +307,10 @@ def preview_addition(request, inventory, stocks, calibrations, geometry_signatur
                 continue
             if total>theory['max_final_mass_g']+EPS:
                 rejected_capacity=True
+                continue
+            if any(value > theory['target']['source_mass_remaining_g'].get(str(port),math.inf)+EPS
+                   for port,value in masses.items()):
+                rejected_source=True
                 continue
             peg_mass, salt_mass = pg+masses[14]*cp, sg+masses[salt_port]*cs
             adopted_peg, adopted_salt = peg_mass/total,salt_mass/total
@@ -300,6 +336,7 @@ def preview_addition(request, inventory, stocks, calibrations, geometry_signatur
     if best is None:
         result['issues'].append('有界整数步搜索内无可执行补加：请调整目标、剂量范围或组成误差限')
         if rejected_capacity:result['issues'].append('量化后的最终质量超出容量或剩余补加质量预算')
+        if rejected_source:result['issues'].append('量化后的补量超出来源剩余质量预算')
         if rejected_time:result['issues'].append('预计补加动作时间超过剩余墙钟时间预算')
         return finish()
     rank,masses,chunks,estimated = best

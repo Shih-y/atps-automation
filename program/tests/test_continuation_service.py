@@ -211,9 +211,9 @@ class ContinuationServiceTests(unittest.TestCase):
             for bottle in state['bottles']:bottle.pop('inventory');bottle.pop('inventory_history')
             db.execute('UPDATE state SET body=? WHERE id=1',(json.dumps(state),));db.commit()
         with patch.object(ExperimentService,'_loop',return_value=None):self.s=ExperimentService(self.c)
-        self.assertEqual(3,self.s.data['schema_version']);self.assertFalse(self.s._bottle(1)['inventory']['known'])
+        self.assertEqual(4,self.s.data['schema_version']);self.assertFalse(self.s._bottle(1)['inventory']['known'])
         self.assertEqual(sample['id'],self.s._bottle(1)['sample_id'])
-        backups=list((self.s.directory/'backups').glob('before-schema-3-*.sqlite3'));self.assertEqual(1,len(backups))
+        backups=list((self.s.directory/'backups').glob('before-schema-4-*.sqlite3'));self.assertEqual(1,len(backups))
         with closing(sqlite3.connect(backups[0])) as db:
             before=json.loads(db.execute('SELECT body FROM state WHERE id=1').fetchone()[0]);self.assertEqual(2,before['schema_version'])
 

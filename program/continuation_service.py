@@ -5,12 +5,19 @@ import secrets
 import time
 from capture_store import timestamp, parse_time
 import experiment_domain as domain
+from observation_policy import validate_observation_policy
 
 
 class ContinuationMixin:
     def _continuation_normalize(self, restarting=False):
         self.data.setdefault('continuation_runs', [])
         self.data.setdefault('active_continuation_run_id', None)
+        for run in self.data['continuation_runs']:
+            run.setdefault('observation_policy',validate_observation_policy({}))
+            run.setdefault('min_initial_mass_g',1.)
+            run.setdefault('reserve_mass_g',0.)
+            run['budgets'].setdefault('source_mass_budget_g',{})
+            run['used'].setdefault('source_mass_g',{})
         for bottle in self.data['bottles']:
             bottle.setdefault('inventory_history', [])
             if 'inventory' not in bottle:
@@ -22,7 +29,7 @@ class ContinuationMixin:
                 self._inventory_unknown(bottle, '程序重启后不能核实当前瓶内物料；确认更换干净空瓶后再续加')
         if restarting:
             for run in self.data['continuation_runs']:
-                if run['status'] in ('running', 'waiting_review', 'paused', 'blocked'):
+                if run['status'] in ('running', 'waiting_review', 'waiting_observation', 'paused', 'blocked'):
                     run.update(status='interrupted', reason='程序重启；不会重放或自动继续加料', finished_epoch=time.time(), finished_at=timestamp())
         self.data['active_continuation_run_id'] = None
 
@@ -59,7 +66,9 @@ class ContinuationMixin:
             used['elapsed_s'] = elapsed
             run['remaining'] = dict(rounds=max(0, budgets['round_budget']-used['rounds']),
                                     added_mass_g=max(0., budgets['added_mass_budget_g']-used['added_mass_g']),
-                                    time_s=max(0., budgets['time_budget_s']-elapsed))
+                                    time_s=max(0., budgets['time_budget_s']-elapsed),
+                                    source_mass_g={p:max(0.,m-used.get('source_mass_g',{}).get(p,0.))
+                                                   for p,m in budgets.get('source_mass_budget_g',{}).items()})
         return result
 
     def _continuation_preview(self, body):
@@ -113,15 +122,23 @@ class ContinuationMixin:
             budgets = dict(round_budget=domain.integer(body.get('round_budget', 10), 1, 1000),
                            added_mass_budget_g=domain.num(body.get('added_mass_budget_g', 10), .000001, 10000),
                            time_budget_s=domain.num(body.get('time_budget_s', 3600), 1, 604800))
+            source_budgets=body.get('source_mass_budget_g',{})
+            if not isinstance(source_budgets,dict) or any(str(p) not in {str(x) for x in self._ports(project)} for p in source_budgets):
+                raise ValueError('来源预算只能填写本项目的PEG、盐、水来源口')
+            budgets['source_mass_budget_g']={str(p):domain.num(m,0,10000) for p,m in source_budgets.items()}
+            policy=validate_observation_policy(body.get('observation_policy',{}))
+            min_initial=domain.num(body.get('min_initial_mass_g',project.get('total_mass_g',1)),.000001,10)
+            reserve=domain.num(body.get('reserve_mass_g',0),0,10)
             run = dict(id=secrets.token_hex(16), project_id=project['id'], created_at=timestamp(),
                        bottles=bottles, step=step, objective=objective, bounds=bounds, budgets=budgets,
-                       used=dict(rounds=0, added_mass_g=0., completed_rounds=0), status='draft',
+                       observation_policy=policy,min_initial_mass_g=min_initial,reserve_mass_g=reserve,
+                       used=dict(rounds=0, added_mass_g=0., completed_rounds=0,source_mass_g={}), status='draft',
                        reason='已创建，尚未启动', rounds=[], sample_ids=[], next_candidate=None,
                        bottle_states={}, waiting_reasons={}, planning_limits=dict(grid=2500, exact_per_bottle=20),
-                       review_policy='valid_human_label_before_same_vial_addition', method='bounded_reachable_rbf_heuristic',
+                       review_policy='valid_human_label_before_same_vial_addition' if policy['mode']=='human' else 'bounded_optical_candidate_before_same_vial_addition', method='bounded_reachable_rbf_heuristic',
                        method_details=dict(sampling_strategy='additive_continuation',independent_replicate=False,
                                            initial_condition='confirmed_empty_or_validated_parent_inventory',
-                                           next_addition='after_valid_human_review',temperature_c=project.get('temperature_c',25),
+                                           next_addition='after_valid_human_review' if policy['mode']=='human' else 'after_evidence_backed_optical_candidate',temperature_c=project.get('temperature_c',25),
                                            measured_temperature_c=project.get('measured_temperature_c'),temperature_control=False),
                        model_parameters=dict(version='continuation-rbf-v1',rbf_length_scale=.08,
                            classification='heuristic_not_calibrated_probability',
@@ -134,7 +151,7 @@ class ContinuationMixin:
             return dict(run=run), True
         run = self._get('continuation_runs', body['run_id'])
         if op == 'continuation_pause':
-            if run['status'] in ('running', 'waiting_review', 'blocked'):
+            if run['status'] in ('running', 'waiting_review', 'waiting_observation', 'blocked'):
                 run.update(status='paused', reason='已暂停后续加料；当前有限动作继续完成，墙钟预算继续计时')
                 self.cancel_dispatch.set()
                 self.data['running'] = False
@@ -175,7 +192,15 @@ class ContinuationMixin:
             if bottle.get('sample_id') != inventory.get('sample_id'):
                 return 'occupied', '瓶位已被其他任务预约'
             parent = self._get('samples', inventory['sample_id'])
+            if (run.get('observation_policy',{}).get('mode','human')=='human'
+                    and (parent.get('label') or {}).get('source')=='automatic_optical'):
+                return 'waiting_review','本次采用人工复核模式；上一阶段的自动候选须由人复核后才能续加'
             if not self._eligible(parent, self._get('projects', run['project_id'])):
+                if run.get('observation_policy',{}).get('mode')=='automatic':
+                    observation=parent.get('auto_observation') or {}
+                    if observation.get('status') in ('unknown','human_reviewed'):
+                        return 'observation_unknown','本瓶观察未得有效相态：'+', '.join(observation.get('reason_codes',[]))
+                    return 'waiting_observation','等待当前瓶稳定光学证据；其他瓶可继续'
                 return 'waiting_review', '等待本瓶有效人工单相/双相复核；不确定结果不能触发补加'
         elif bottle.get('sample_id'):
             return 'occupied', '空瓶已由其他排队任务预约'
@@ -184,7 +209,9 @@ class ContinuationMixin:
     def _continuation_budget(self, run, now):
         remaining = dict(rounds=run['budgets']['round_budget']-run['used']['rounds'],
                          added_mass_g=run['budgets']['added_mass_budget_g']-run['used']['added_mass_g'],
-                         time_s=run['budgets']['time_budget_s']-(now-run.get('started_epoch', now)))
+                         time_s=run['budgets']['time_budget_s']-(now-run.get('started_epoch', now)),
+                         source_mass_g={p:max(0.,m-run['used'].get('source_mass_g',{}).get(p,0.))
+                                        for p,m in run['budgets'].get('source_mass_budget_g',{}).items()})
         return remaining
 
     def _continuation_finish(self, run, status, reason):
@@ -205,7 +232,7 @@ class ContinuationMixin:
 
     def _continuation_tick(self, device_state, now):
         run = self._get('continuation_runs', self.data['active_continuation_run_id'])
-        if run['status'] not in ('running', 'waiting_review', 'blocked'):
+        if run['status'] not in ('running', 'waiting_review', 'waiting_observation', 'blocked'):
             return None
         remaining = self._continuation_budget(run, now)
         if remaining['rounds'] <= 0 or remaining['added_mass_g'] <= 1e-12 or remaining['time_s'] <= 0:
@@ -213,9 +240,17 @@ class ContinuationMixin:
             return None
         if device_state.get('busy'):
             return None
-        if not device_state.get('connected') or not self._camera_online():
-            run.update(status='blocked', reason='等待设备和相机在线；墙钟预算继续计时')
+        if device_state.get('state')=='FAULT' or device_state.get('stop_status')=='unconfirmed' or device_state.get('common')=='unknown':
+            run.update(status='paused',reason='设备或公共液路状态无法确认，已暂停后续液体动作；核实后显式恢复')
+            self.data['running']=False
+            self.cancel_dispatch.set()
             return None
+        if not device_state.get('connected'):
+            run.update(status='paused',reason='设备通信已断开，后续液体动作暂停；重新连接后显式恢复')
+            self.data['running']=False
+            self.cancel_dispatch.set()
+            return None
+        camera_online=self._camera_online()
         project = self._get('projects', run['project_id'])
         issues = self._continuation_stock_issues(project)
         if issues:
@@ -226,6 +261,9 @@ class ContinuationMixin:
             self._continuation_finish(run, 'blocked', '拍照计划没有位于有效观察窗口的时间点')
             return None
         observation_s = min(eligible_offsets)
+        policy=run.get('observation_policy',{})
+        if policy.get('mode')=='automatic':
+            observation_s += (policy['stable_frames']-1)*max(policy['min_frame_spacing_s'],policy['retry_interval_s'])
         if remaining['time_s'] <= observation_s:
             self._continuation_finish(run, 'budget_complete', '剩余墙钟预算不足以完成新一剂及首次有效观察')
             return None
@@ -241,8 +279,18 @@ class ContinuationMixin:
                 ready.append(bottle)
         if not ready:
             waiting = any(s['state']=='waiting_review' for s in run['bottle_states'].values())
-            run.update(status='waiting_review' if waiting else 'blocked',
-                       reason='等待人工复核，其他瓶可继续' if waiting else '所选瓶位尚无已知物料，请处理瓶位或确认更换空瓶')
+            observing=any(s['state']=='waiting_observation' for s in run['bottle_states'].values())
+            if observing:
+                run.update(status='waiting_observation',reason='各瓶正在进行有上限的自动观察')
+            elif waiting:
+                run.update(status='waiting_review',reason='等待人工复核，其他瓶可继续')
+            elif policy.get('mode')=='automatic':
+                self._continuation_finish(run,'exhausted','所有瓶均无可执行下一点：'+'; '.join(run['waiting_reasons'].values()))
+            else:
+                run.update(status='blocked',reason='所选瓶位尚无已知物料，请处理瓶位或确认更换空瓶')
+            return None
+        if not camera_online:
+            run.update(status='blocked',reason='相机离线，暂停新加料；已配样品继续有限观察计时')
             return None
         epoch = self.stop_epoch
         candidate, training = self._continuation_choose(run, project, ready, remaining, observation_s)
@@ -253,14 +301,17 @@ class ContinuationMixin:
         if candidate is None:
             diagnostics = run['planning_diagnostics']
             if diagnostics['theoretically_feasible'] == 0:
-                if any(s['state']=='waiting_review' for s in run['bottle_states'].values()):
-                    run.update(status='waiting_review',reason='已就绪瓶没有可达新点，等待其余瓶复核')
+                if any(s['state'] in ('waiting_review','waiting_observation') for s in run['bottle_states'].values()):
+                    run.update(status='waiting_observation' if policy.get('mode')=='automatic' else 'waiting_review',reason='已就绪瓶没有可达新点，等待其余瓶观察或复核')
                 else:
-                    self._continuation_finish(run,'exhausted','当前有限网格、容量及质量预算内没有可达新目标；本次运行结束')
+                    self._continuation_finish(run,'exhausted','当前有限网格、容量及质量预算内没有可达新目标：'+'; '.join(diagnostics.get('rejection_reasons',{})))
             else:
-                run.update(status='paused',reason='有界精编译未找到可执行方案；未证明全局无解，请调整范围或标定后重建任务')
-                self.data['running'] = False
-                self.cancel_dispatch.set()
+                reason='有界精编译未找到可执行方案；未证明全局无解：'+'; '.join(diagnostics.get('rejection_reasons',{}))
+                if policy.get('mode')=='automatic':self._continuation_finish(run,'exhausted',reason)
+                else:
+                    run.update(status='paused',reason=reason)
+                    self.data['running'] = False
+                    self.cancel_dispatch.set()
             return None
         run.update(status='running', next_candidate=copy.deepcopy(candidate), reason='正在执行已冻结的补加方案')
         return self._continuation_claim(run, project, candidate, training, epoch)
@@ -292,7 +343,10 @@ class ContinuationMixin:
             return distance*factor, phase, uncertainty
         bounds, step = run['bounds'], run['step']
         all_candidates = []
-        diagnostics = dict(theoretically_feasible=0, exact_evaluated=0, exact_limit_reached=False, coverage_anchor_count=len(anchors))
+        diagnostics = dict(theoretically_feasible=0, exact_evaluated=0, exact_limit_reached=False, coverage_anchor_count=len(anchors),rejection_reasons={})
+        def rejected(issues):
+            for issue in issues:
+                diagnostics['rejection_reasons'][issue]=diagnostics['rejection_reasons'].get(issue,0)+1
         for bottle in bottles:
             feasible = []
             for i in range(int((bounds['peg_max']-bounds['peg_min'])/step+1e-8)+1):
@@ -304,12 +358,15 @@ class ContinuationMixin:
                     request = dict(project_id=project['id'], bottle=bottle['bottle'], sample=bottle['bottle'],
                                    peg_fraction=peg, salt_fraction=salt, salt_port=project['salt_port'],
                                    total_mass_g=project.get('total_mass_g',1), safe_mass_limit_g=project.get('safe_mass_limit_g'),
+                                   min_initial_mass_g=run.get('min_initial_mass_g',project.get('total_mass_g',1)),reserve_mass_g=run.get('reserve_mass_g',0),
+                                   source_mass_remaining_g=remaining.get('source_mass_g',{}),
                                    max_added_mass_g=remaining['added_mass_g'], remaining_time_s=remaining['time_s']-observation_s)
                     try:
                         theoretical = theoretical_addition(request, bottle['inventory'], project['stocks'])
                     except ValueError:
                         continue
                     if not theoretical.get('reachable'):
+                        rejected(theoretical.get('issues',[]))
                         continue
                     preliminary = score(peg, salt)[0]
                     feasible.append((preliminary, -theoretical['added_mass_g'], request))
@@ -320,6 +377,7 @@ class ContinuationMixin:
                 diagnostics['exact_evaluated'] += 1
                 preview = self._continuation_preview(request)
                 if not preview['executable'] or preview['added_mass_g'] <= 0:
+                    rejected(preview.get('issues',[]))
                     continue
                 composition = preview['composition']
                 peg, salt = composition['peg_fraction'], composition['salt_fraction']
@@ -329,13 +387,15 @@ class ContinuationMixin:
                 all_candidates.append(dict(bottle=bottle['bottle'], target=preview['target'], composition=composition,
                                            preview=preview, inventory_key=preview['inventory_key'],
                                            selection_score=value, classification_score=phase, uncertainty=uncertainty,
-                                           reason='reachable_boundary_coverage' if run['objective']=='boundary' else 'reachable_two_phase_neighborhood',
+                                           reason=('initial_space_coverage' if not training else 'seek_other_phase_class' if len(classes)<2 else 'reachable_boundary_coverage') if run['objective']=='boundary' else 'reachable_two_phase_neighborhood',
+                                           data_regime='no_valid_labels' if not training else 'one_class' if len(classes)<2 else 'two_classes',
+                                           initial_empty=bottle['inventory'].get('total_mass_g',0)<=1e-12,
                                            estimated_duration_s=preview['estimated_duration_s'], added_mass_g=preview['added_mass_g']))
         run['planning_diagnostics'] = diagnostics
         run['coverage_snapshot'] = coverage
         if not all_candidates:
             return None, training
-        return max(all_candidates, key=lambda c:(c['selection_score'], -c['added_mass_g'], -c['estimated_duration_s'])), training
+        return max(all_candidates, key=lambda c:(c['initial_empty'],c['selection_score'], -c['added_mass_g'], -c['estimated_duration_s'])), training
 
     def _continuation_claim(self, run, project, candidate, training, epoch):
         from continuation_domain import inventory_key
@@ -344,6 +404,8 @@ class ContinuationMixin:
             return None
         remaining = self._continuation_budget(run, time.time())
         observation = min(o for o in project['photo_offsets_s'] if o >= project['min_settle_s'])
+        policy=run.get('observation_policy',{})
+        if policy.get('mode')=='automatic':observation+=(policy['stable_frames']-1)*max(policy['min_frame_spacing_s'],policy['retry_interval_s'])
         if remaining['rounds'] < 1 or candidate['added_mass_g'] > remaining['added_mass_g']+1e-12 or candidate['estimated_duration_s']+observation > remaining['time_s']:
             self._continuation_finish(run,'budget_complete','规划期间剩余预算已不足，未发送动作')
             return None
@@ -353,6 +415,7 @@ class ContinuationMixin:
         sample = dict(id=sample_id, project_id=project['id'], bottle=bottle['bottle'], created_at=timestamp(),
                       parent_sample_id=parent_id, lineage_root_id=parent.get('lineage_root_id', parent_id) if parent else sample_id,
                       continuation_run_id=run['id'], kind='continuation', status='preparing', execution_state='preparing',
+                      observation_policy=copy.deepcopy(run['observation_policy']),
                       is_independent_repeat=False,
                       target=copy.deepcopy(candidate['target']), recipe=copy.deepcopy(candidate['preview']),
                       execution_key=domain.execution_key(candidate['preview']['plan']), mixed_at=None,
@@ -367,12 +430,16 @@ class ContinuationMixin:
         run['sample_ids'].append(sample_id)
         run['used']['rounds'] += 1
         run['used']['added_mass_g'] += candidate['added_mass_g']
+        for row in candidate['preview']['plan']['items']:
+            port=str(row['source'])
+            run['used']['source_mass_g'][port]=run['used']['source_mass_g'].get(port,0.)+row['estimated_mass_g']
         run['rounds'].append(dict(id=secrets.token_hex(16), index=run['used']['rounds'], sample_id=sample_id,
                                   parent_sample_id=parent_id, bottle=bottle['bottle'], status='reserved', at=timestamp(),
                                   candidate=copy.deepcopy(candidate), training_records=copy.deepcopy(training),
                                   charged_mass_g=candidate['added_mass_g'], initial_inventory=copy.deepcopy(bottle['inventory']),
                                   model_parameters=dict(copy.deepcopy(run['model_parameters']),coverage_coordinates=copy.deepcopy(run['coverage_snapshot'])),
-                                  approval_basis='automatic_after_valid_human_parent_review' if parent else 'explicit_run_start_on_confirmed_empty'))
+                                  observation_policy=copy.deepcopy(run['observation_policy']),
+                                  approval_basis=('automatic_after_optical_candidate' if (parent.get('label') or {}).get('source')=='automatic_optical' else 'automatic_after_valid_human_parent_review') if parent else 'explicit_run_start_on_confirmed_empty'))
         return dict(action='experiment_recipe', experiment_sample_id=sample_id, plan=copy.deepcopy(sample['recipe']['plan']))
 
     def _continuation_action_event(self, event, sample, plan, error=None):
@@ -446,7 +513,7 @@ class ContinuationMixin:
             if bottle.get('sample_id'):
                 self._inventory_unknown(bottle,reason)
         for run in self.data['continuation_runs']:
-            if run['status'] in ('running','waiting_review','blocked','paused') or run.get('finite_action_in_progress'):
+            if run['status'] in ('running','waiting_review','waiting_observation','blocked','paused') or run.get('finite_action_in_progress'):
                 run.update(status='stopped',reason=reason,finished_at=timestamp(),finished_epoch=time.time(),finite_action_in_progress=False)
                 run.setdefault('scheduling_stopped_epoch',time.time())
                 run.setdefault('scheduling_stopped_at',timestamp())

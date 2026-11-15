@@ -15,8 +15,9 @@ from pathlib import Path
 from capture_store import timestamp, parse_time, validate_png, validate_analysis
 import experiment_domain as domain
 from continuation_service import ContinuationMixin
+from observation_service import ObservationMixin
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 HARD_EXCLUSIONS = {'interrupted', 'restart_interrupted', 'manual_composition', 'missing_mixing'}
 
 
@@ -24,7 +25,7 @@ def uid():
     return secrets.token_hex(16)
 
 
-class ExperimentService(ContinuationMixin):
+class ExperimentService(ContinuationMixin, ObservationMixin):
     def __init__(self, controller):
         self.controller = controller
         self.lock = threading.RLock()
@@ -127,7 +128,9 @@ class ExperimentService(ContinuationMixin):
         label = sample.get('label') or {}
         frame = next((f for f in sample.get('frames', []) if f['id'] == label.get('frame_id')), None)
         if label.get('classification') not in ('single', 'two_phase') or label.get('clear') is not True:
-            reasons.append('尚无清晰的人工单相或双相标签')
+            reasons.append('尚无清晰的人工标签或满足本次策略的自动光学候选')
+        if not self._automatic_label_valid(sample, project):
+            reasons.append('自动光学候选缺少当前观察阶段的稳定证据或不满足冻结策略')
         if not frame:
             reasons.append('缺少复核照片')
         else:
@@ -350,7 +353,9 @@ class ExperimentService(ContinuationMixin):
             offsets = [o for o in (project or {}).get('photo_offsets_s',[]) if o >= (project or {}).get('min_settle_s',0)]
             duration = sample.get('recipe',{}).get('estimated_duration_s')
             remaining = run['budgets']['time_budget_s']-(time.time()-run.get('started_epoch',0))
-            if not offsets or duration is None or remaining < duration+min(offsets):
+            policy=run.get('observation_policy',{})
+            observation_margin=(policy['stable_frames']-1)*max(policy['min_frame_spacing_s'],policy['retry_interval_s']) if policy.get('mode')=='automatic' else 0
+            if not offsets or duration is None or remaining < duration+min(offsets)+observation_margin:
                 sample['dispatch_rejection_reason'] = 'time_budget'
                 return False
             from continuation_domain import inventory_key
@@ -447,7 +452,7 @@ class ExperimentService(ContinuationMixin):
                     active = self.data.get('active_continuation_run_id')
                     if active:
                         run = self._get('continuation_runs',active)
-                        if run['status'] in ('running','waiting_review','blocked'):
+                        if run['status'] in ('running','waiting_review','waiting_observation','blocked'):
                             run.update(status='paused',reason='存档失败，后续自动调度已暂停；恢复存储后请显式恢复',storage_error=str(error))
                     if key and op in ('start','continuation_start','continuation_resume'):
                         # The start never committed. Do not retain a running
@@ -512,7 +517,7 @@ class ExperimentService(ContinuationMixin):
             active = self.data.get('active_continuation_run_id')
             if active:
                 run = self._get('continuation_runs',active)
-                if run['status'] in ('running','waiting_review','blocked'):
+                if run['status'] in ('running','waiting_review','waiting_observation','blocked'):
                     run.update(status='paused',reason='已暂停后续任务；墙钟预算继续计时')
         elif op == 'cancel':
             sample = self._get('samples', body['sample_id'])
@@ -552,7 +557,7 @@ class ExperimentService(ContinuationMixin):
             if sample.get('label'):
                 sample.setdefault('review_history', []).append(copy.deepcopy(sample['label']))
             sample['label'] = dict(body, version=len(sample.get('review_history', [])) + 1,
-                                   reviewed_at=timestamp(), generation=sample['generation'])
+                                   reviewed_at=timestamp(), generation=sample['generation'], source='human')
             sample['label']['eligible'] = self._eligible(sample, self._get('projects', sample['project_id']))
         elif op == 'exclude':
             sample = self._get('samples', body['sample_id'])
@@ -579,6 +584,27 @@ class ExperimentService(ContinuationMixin):
             if sample.get('measured_composition'):
                 sample.setdefault('composition_history', []).append(copy.deepcopy(sample['measured_composition']))
             sample['measured_composition'] = value
+        elif op == 'tie_line':
+            sample=self._get('samples',body['sample_id'])
+            if sample['status'] not in ('settling','observation_complete') or not sample.get('mixed_at'):
+                raise ValueError('请选择已完成配液的样品记录独立相组成分析')
+            method=str(body.get('method','')).strip()
+            evidence=str(body.get('evidence','')).strip()
+            if not method or not evidence:
+                raise ValueError('系线须填写上下相独立分析方法和证据；不能由照片推断')
+            phases={}
+            for phase in ('upper','lower'):
+                value=body.get(phase)
+                if not isinstance(value,dict):raise ValueError('请分别填写上下相组成')
+                peg,salt=domain._coordinate_pair(value)
+                phases[phase]=dict(peg_fraction=peg,salt_fraction=salt,water_fraction=1-peg-salt,
+                    mass_g=domain.num(value['mass_g'],.000001,100) if value.get('mass_g') is not None else None)
+            record=dict(id=uid(),sample_id=sample['id'],generation=sample['generation'],recorded_at=timestamp(),
+                method=method,evidence=evidence,**phases,basis='operator_entered_independent_phase_analysis',
+                units='mass_fraction_w_w',equilibrium_verified=False,
+                note='独立分析录入，不替换整瓶组成；平衡、相取样损失及系线质量守恒需另行核实')
+            sample.setdefault('tie_line_records',[]).append(record)
+            result['tie_line']=record
         elif op == 'suggest':
             result['round'] = self._suggest(body)
         elif op == 'approve':
@@ -850,7 +876,7 @@ class ExperimentService(ContinuationMixin):
             active = self.data.get('active_continuation_run_id')
             if active:
                 run = self._get('continuation_runs',active)
-                if run['status'] in ('running','waiting_review','blocked'):
+                if run['status'] in ('running','waiting_review','waiting_observation','blocked'):
                     run.update(status='paused',reason='已接受手动调试，后续自动加料暂停；可核实状态后显式恢复')
             if action == 'select_port':
                 self._save()
@@ -904,6 +930,7 @@ class ExperimentService(ContinuationMixin):
                                                                  mixed_at=mixed_at, max_observe_s=project['max_observe_s'],
                                                                  offsets_s=copy.deepcopy(project['photo_offsets_s']), reason='混合结束'))
         self._schedule(sample, project['photo_offsets_s'])
+        self._observation_begin(sample)
 
     def on_action_event(self, event, payload, plan=None, error=None):
         with self.lock:
@@ -920,7 +947,8 @@ class ExperimentService(ContinuationMixin):
                 self._save()
                 return
             sample['progress'] = copy.deepcopy(plan)
-            sample.setdefault('action_events', []).append(dict(at=timestamp(), event=event, error=str(error) if error else None,
+            sample.setdefault('execution_generation', sample.get('generation',0))
+            sample.setdefault('action_events', []).append(dict(at=timestamp(), event=event, generation=sample.get('generation',0),error=str(error) if error else None,
                                                                current=copy.deepcopy((plan or {}).get('current')),
                                                                completed_commands=(plan or {}).get('completed_commands', 0),
                                                                amount_basis='command_progress_not_measured_delivery'))
@@ -978,6 +1006,7 @@ class ExperimentService(ContinuationMixin):
                         job['failure_reason'] = '相机、浏览器或电脑未在线，未采集到计划照片'
                 elif job['status'] == 'due' and not self._camera_online():
                     job.update(status='missed', failure_reason='到期任务未保存且相机心跳中断', lateness_s=max(0, now - job.get('due_at', now)))
+            self._observation_tick(now)
             if self.data['running'] and not self.cancel_dispatch.is_set() and self.active_stop_epoch == self.stop_epoch and self.data.get('active_continuation_run_id'):
                 payload = self._continuation_tick(state, now)
             if self.data['running'] and not self.cancel_dispatch.is_set() and self.active_stop_epoch == self.stop_epoch and not self.data.get('active_continuation_run_id') and state.get('connected') and not state.get('busy'):
@@ -1192,6 +1221,9 @@ class ExperimentService(ContinuationMixin):
             archive.writestr('data.json', json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False))
             archive.writestr('metadata.json', json.dumps(metadata, ensure_ascii=False, indent=2))
             archive.writestr('samples.csv', '\ufeff' + table.getvalue())
+            from experiment_export import detailed_tables
+            for filename, content in detailed_tables(data).items():
+                archive.writestr(filename, content)
             archive.writestr('report.html', '<!doctype html><meta charset="utf-8"><h1>实验记录</h1><p>工程等待时间不代表已验证分相平衡；总质量不代表组分实测。</p><pre>' + html.escape(table.getvalue()) + '</pre>')
             missing = []
             for sample in samples:

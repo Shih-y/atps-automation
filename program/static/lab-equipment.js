@@ -119,8 +119,8 @@ window.ATPSLabPages.equipment = (ctx, page) => {
       ['doses_per_group', '每组剂数', 5],
       ['aspirate_steps', '每剂吸取步数', 45],
       ['aspirate_rpm', '吸取 / rpm', 5],
-      ['chase_steps', '追送步数', 1000],
-      ['chase_rpm', '追送 / rpm', 15],
+      ['chase_steps', '追送步数', 2000],
+      ['chase_rpm', '追送 / rpm', 30],
       ['min_steps', '适用最小吸取步数', 45],
       ['max_steps', '适用最大吸取步数', 45],
       [

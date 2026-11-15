@@ -100,7 +100,7 @@
     const values=sources.map(p=>Number($('volume'+p).value));
     const total=values.reduce((sum,n)=>sum+n,0),ref=state.water_dose_reference,p=ref?.parameters;
     $('recipePreview').textContent=values.every(n=>Number.isFinite(n)&&n>=0)?`本次合计 ${Number(total.toFixed(4))} mL（请求量）。整数步数会取整；实际体积待测。`:'请检查各来源体积。';
-    $('referenceSummary').textContent=p&&ref.mean_per_dose_ml?`当前保存参考：${p.aspirate_steps}步 ≈ ${ref.mean_per_dose_ml} mL；吸取 ${p.aspirate_rpm} rpm，基础追送 ${p.chase_steps}步 / ${p.chase_rpm} rpm。`:'尚未读取保存参考；等待服务。';
+    $('referenceSummary').textContent=p&&ref.mean_per_dose_ml?`当前保存参考：${p.aspirate_steps}步 ≈ ${ref.mean_per_dose_ml} mL；吸取 ${p.aspirate_rpm} rpm，基础追送 ${p.chase_steps}步 / ${p.chase_rpm} rpm。仅用于步数估算；追送参数改变后，实际交付量需复测。`:'尚未读取保存参考；等待服务。';
   }
   function renderTelemetry(available=true) {
     const h=state.hardware_status;

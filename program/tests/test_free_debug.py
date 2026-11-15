@@ -106,7 +106,7 @@ class FreeDebugTests(unittest.TestCase):
         moves=self.c.hardware.moves
         self.assertEqual([14,1,14,1,16],[m['port'] for m in moves])
         self.assertEqual(150,moves[0]['steps'])
-        self.assertEqual(1105,moves[1]['steps'])
+        self.assertEqual(2105,moves[1]['steps'])
         self.assertEqual([150,150],s['volume_run']['chunks'])
         self.assertFalse(s['volume_run']['mixing_performed'])
 

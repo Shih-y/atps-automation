@@ -1,5 +1,11 @@
 'use strict';
 window.ATPSLabPages.design = (ctx, page) => {
+  const runState = (status) =>
+    ({
+      waiting_observation: '等待自动观察',
+      observation_complete: '观察完成',
+      exhausted: '研究已结束（候选或条件耗尽）',
+    }[status] || ctx.runState(status));
   const projectCard = ctx.card(
     page,
     '建立项目或条件新版本',
@@ -257,7 +263,7 @@ window.ATPSLabPages.design = (ctx, page) => {
   const runCard = ctx.card(
     page,
     '同瓶研究：建立设置，再明确启动',
-    '有效人工单相/双相复核后，才允许该瓶下一次补加；其他瓶可继续。时间预算从启动起计算，包含等待人工复核。不确定结果先复拍或复核。',
+    '默认人工复核；明确选择自动模式后，可采用有证据的光学候选继续补加。其他瓶可继续。时间预算从启动起计算，包含等待人工复核与自动观察。工程阈值未经科学相平衡验证；未见界面本身不能自动认定单相。',
   );
   const runForm = ctx.form(
     runCard,
@@ -280,6 +286,20 @@ window.ATPSLabPages.design = (ctx, page) => {
       ['round_budget', '最多补加次数', 10],
       ['added_mass_budget_g', '总补加质量预算 / g', 5],
       ['time_budget_min', '墙钟时间预算 / min', 60],
+      ['min_initial_mass_g', '首次成像最低质量 / g（留空用项目总质量）', ''],
+      ['reserve_mass_g', '预留容量 / g', 0.2],
+      ['source_budget_peg_g', '14口 PEG母液预算 / g（可留空）', ''],
+      ['source_budget_salt_g', '项目盐来源口母液预算 / g（可留空）', ''],
+      ['source_budget_water_g', '15口 水预算 / g（可留空）', ''],
+      ['observation_mode', '判相模式', 'human', [['human', '人工复核（默认）'], ['automatic', '自动光学候选']]],
+      ['max_auto_retries', '最多自动补拍次数', 2],
+      ['retry_interval_s', '自动补拍间隔 / s', 60],
+      ['stable_frames', '稳定证据帧数', 2],
+      ['min_frame_spacing_s', '证据帧最小间隔 / s', 30],
+      ['max_interface_shift_fraction', '界面位移上限 / 检测液区高度比例', 0.03],
+      ['min_phase_fraction', '最小相层高度 / 检测液区高度比例', 0.1],
+      ['single_phase_validated', '单相判据已独立验证', 'false', [['false', '未验证：无界面仍为未知'], ['true', '已验证（须填写证据）']]],
+      ['single_phase_evidence', '已验证单相判据与独立证据', ''],
     ],
     '仅建立同瓶研究设置',
     async (d, requestId) => {
@@ -289,6 +309,14 @@ window.ATPSLabPages.design = (ctx, page) => {
   );
   function runPayload(d) {
     if (!ctx.project()) throw Error('先选择项目');
+    const sourceBudgets = {};
+    for (const [name, port] of [
+      ['source_budget_peg_g', 14],
+      ['source_budget_salt_g', ctx.project().salt_port],
+      ['source_budget_water_g', 15],
+    ]) {
+      if (d[name]?.trim()) sourceBudgets[port] = +d[name];
+    }
     return {
       project_id: ctx.projectId,
       bottles: d.bottles
@@ -304,6 +332,20 @@ window.ATPSLabPages.design = (ctx, page) => {
       round_budget: +d.round_budget,
       added_mass_budget_g: +d.added_mass_budget_g,
       time_budget_s: +d.time_budget_min * 60,
+      min_initial_mass_g: d.min_initial_mass_g.trim() === '' ? ctx.project().total_mass_g : +d.min_initial_mass_g,
+      reserve_mass_g: +d.reserve_mass_g,
+      ...(Object.keys(sourceBudgets).length ? { source_mass_budget_g: sourceBudgets } : {}),
+      observation_policy: {
+        mode: d.observation_mode,
+        max_auto_retries: +d.max_auto_retries,
+        retry_interval_s: +d.retry_interval_s,
+        stable_frames: +d.stable_frames,
+        min_frame_spacing_s: +d.min_frame_spacing_s,
+        max_interface_shift_fraction: +d.max_interface_shift_fraction,
+        min_phase_fraction: +d.min_phase_fraction,
+        single_phase_validated: d.single_phase_validated === 'true',
+        single_phase_evidence: d.single_phase_evidence.trim(),
+      },
     };
   }
   async function createRun(body, requestId) {
@@ -364,7 +406,7 @@ window.ATPSLabPages.design = (ctx, page) => {
     '启动所选同瓶研究',
     async () => {
       await ctx.continuationCommand('start');
-      ctx.tell('已启动同瓶研究；先完成的瓶等待有效人工复核，其余瓶继续。');
+      ctx.tell('已启动同瓶研究；各瓶按冻结的人工/自动观察策略等待有效判相，其余瓶继续。');
     },
     'continuation-start',
   );
@@ -456,14 +498,14 @@ window.ATPSLabPages.design = (ctx, page) => {
           .continuationRuns()
           .map((r) => [
             r.id,
-            `${ctx.runState(r.status)} · ${(r.bottles || []).join('、')}号瓶 · ${r.id.slice(0, 8)}`,
+            `${runState(r.status)} · ${(r.bottles || []).join('、')}号瓶 · ${r.id.slice(0, 8)}`,
           ]),
         '尚无同瓶研究',
       );
       runSelect.value = ctx.continuationRunId || '';
       const run = ctx.continuationRun();
       runSummary.textContent = run
-        ? `${ctx.runState(run.status)}；${run.reason || ''}。补加预算 ${run.budgets?.added_mass_budget_g ?? '?'} g / ${run.budgets?.round_budget ?? '?'}次；墙钟预算 ${(run.budgets?.time_budget_s ?? 0) / 60} min（含等待人工复核）。`
+        ? `${runState(run.status)}；${run.reason || ''}。补加预算 ${run.budgets?.added_mass_budget_g ?? '?'} g / ${run.budgets?.round_budget ?? '?'}次；墙钟预算 ${(run.budgets?.time_budget_s ?? 0) / 60} min（含等待人工复核与自动观察）。已冻结模式：${run.observation_policy?.mode === 'automatic' ? '自动光学候选' : '人工复核'}；自动补拍上限 ${run.observation_policy?.max_auto_retries ?? 2} 次。`
         : '先建立设置；此操作本身不会配液。';
     },
     projectChanged() {

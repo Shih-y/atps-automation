@@ -149,3 +149,12 @@ GET `/api/lab/state` 包含 `bottles[].inventory`、`continuation_runs`、样品
 `/api/lab/stock` 支持 `reagent_form=as_configured|anhydrous|dihydrate`。二水合物仅适用于10口 `solute=sodium_citrate`；传入 `reagent_mass_fraction`，后端按258.06/294.10计算有效 `mass_fraction`，保留两个值和换算依据。旧项目快照不改写。
 
 可选密度字段 `density_basis=unknown|measured|reference|legacy_unverified`，非空密度需依据；实测/参考需填写 `density_temperature_c`、有效溶质的 `density_mass_fraction`、`density_batch`。只有批次、温度、浓度匹配的实测密度可用于体积称量转质量。直接 `groups_g` 标定无需密度。
+
+
+## 2026.11.15.1 自动观察闭环
+
+`continuation_run` 新增 `observation_policy`（mode: human/automatic；stable_frames、min_frame_spacing_s、max_auto_retries、retry_interval_s、max_interface_shift_fraction、min_phase_fraction、single_phase_validated、single_phase_evidence）、`min_initial_mass_g`、`reserve_mass_g`、`source_mass_budget_g`（来源口字符串→克数）。默认human，自动单相须有已验证判据。策略与预算随运行冻结。预览不发送动作。
+
+样品 `auto_observation` 记录 pending/candidate/unknown/human_reviewed、reason_codes、evidence_frame_ids、retries_used；label.source 为human或automatic_optical。未知不会自动进入训练。正常补拍不更改配方，不重复配液。
+
+`POST /api/lab/tie_line`：sample_id、upper/lower对象（peg_fraction、salt_fraction，可选mass_g）、method、evidence、request_id。保存独立相组成分析，不从图像推测；不替换整瓶measured_composition。项目导出新增additions.csv、observations.csv、action_events.csv、tie_lines.csv。
