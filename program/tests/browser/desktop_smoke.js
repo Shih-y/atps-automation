@@ -40,6 +40,13 @@ async function closeNativeWindow(){
   const state=await page.evaluate(async()=>await(await fetch('/api/state')).json());assert.equal(state.connected,false);
   for(const title of ['设备与校准','实验设计','运行监控','图像判相与复核','相图与主动学习','数据与报告']){
     await page.getByRole('button',{name:title,exact:true}).click();
+    if(title==='设备与校准'){
+      assert(await page.locator('#source-volume-form').isVisible(),'packaged equipment page includes source endpoint volume calibration');
+      assert(await page.locator('#source-volume-preview-form').isVisible(),'packaged equipment page includes volume preview');
+      assert(await page.locator('#source-volume-run').isDisabled(),'packaged single-source run awaits explicit preview');
+      assert.equal(await page.locator('#source-volume-form [name=source] option').count(),6);
+      assert.equal(await page.locator('#source-volume-form [name=sample] option').count(),6);
+    }
     await page.screenshot({path:path.join(output,title+'.png'),fullPage:true});
   }
   await page.evaluate(()=>{

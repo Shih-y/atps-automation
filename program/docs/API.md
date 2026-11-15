@@ -158,3 +158,25 @@ GET `/api/lab/state` 包含 `bottles[].inventory`、`continuation_runs`、样品
 样品 `auto_observation` 记录 pending/candidate/unknown/human_reviewed、reason_codes、evidence_frame_ids、retries_used；label.source 为human或automatic_optical。未知不会自动进入训练。正常补拍不更改配方，不重复配液。
 
 `POST /api/lab/tie_line`：sample_id、upper/lower对象（peg_fraction、salt_fraction，可选mass_g）、method、evidence、request_id。保存独立相组成分析，不从图像推测；不替换整瓶measured_composition。项目导出新增additions.csv、observations.csv、action_events.csv、tie_lines.csv。
+
+## 2026.11.15.2 研究边界与分来源体积参考
+
+自动续加的运行 `bounds` 同时约束目标及整数步后的预计组成，独立于 `composition_tolerance_fraction`。冻结配方保存 `target.research_bounds`；单独 `continuation_preview` 可传 `research_bounds={peg_min,peg_max,salt_min,salt_max}`。边界包含端点，只容忍浮点舍入误差。候选失败保存在 `planning_diagnostics.by_bottle`；仍有观察/复核中的瓶时保持等待，搜索限额未穷尽时暂停而不宣称全局耗尽。
+
+GET `/api/state` 新增 `source_volume_calibrations` 历史列表。POST `/api/source-volume-calibration` 只保存测量、不运动：
+
+```json
+{"source":14,"sample":1,"doses":5,"temperature_c":25,
+ "aspirate":{"steps":45,"rpm":5,"timeout_s":20},
+ "chase":{"steps":2000,"rpm":30,"timeout_s":35},
+ "groups_ml":[0.75,0.74,0.76],"min_steps":1,"max_steps":240,
+ "sample_bottles":[1],"note":"示例数据，实际使用时替换为实测读数"}
+```
+
+返回 `{ok,reference}`。`groups_ml` 是每组样品出口净收集体积，除以 `doses` 得每剂均值；不能同时提交 `groups_g`。若提交 `groups_g`，必须同时提供与当前母液记录相符的 `density_g_ml`、`density_evidence`，且该母液密度应有匹配的实测温度、批次和浓度。禁止假定所有溶液密度为1。
+
+省略 `min_steps/max_steps` 时默认仅实测剂量步数；主动扩大范围是 `trial_proportional_estimate_not_validated`，不升级为正式校准。多瓶范围须填写 `bottle_scope_evidence`。可提供 `stock_version` 防止收集期间版本改变；提供 `collection_run_id` 时必须匹配最近已完成的 `stock_calibration` 收集记录及全部条件。未绑定机器收集记录的手工录入明确记录来源。
+
+POST `/api/source-volume-preview` 接受 `{source,sample,volume_ml}`，返回 `{ok,plan}`，不会运动。`plan` 包含 requested_ml、estimated_ml、total_steps、chunks、parameters、reference 和 calibration_basis。已有来源参考时按相应瓶位的最新参考检查批次、温度及液路；失配不会退回旧清水参考。正式 `/api/action` 的 volume/recipe 使用相同规划逻辑，并保留来源参考快照。每段追送参数固定，吸取总步数按比例四舍五入且分段保持总量；每段预计体积不超过0.8 mL，不超过记录的试用步数范围。
+
+这些体积参考独立存储在 `source_volume_calibrations.json`，不会写入或替代正式自动质量配样的g/步标定。所有比例交付量均为估计，`actual_ml` 保持null，动作完成不等于容量实测。

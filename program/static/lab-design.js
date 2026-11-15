@@ -265,6 +265,7 @@ window.ATPSLabPages.design = (ctx, page) => {
     '同瓶研究：建立设置，再明确启动',
     '默认人工复核；明确选择自动模式后，可采用有证据的光学候选继续补加。其他瓶可继续。时间预算从启动起计算，包含等待人工复核与自动观察。工程阈值未经科学相平衡验证；未见界面本身不能自动认定单相。',
   );
+  ctx.node('p', '研究范围同时约束目标和整数步后的预计组成；组成误差限不会放宽边界。', runCard, {className: 'muted'});
   const runForm = ctx.form(
     runCard,
     [

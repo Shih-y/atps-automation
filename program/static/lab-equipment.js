@@ -183,10 +183,15 @@ window.ATPSLabPages.equipment = (ctx, page) => {
       ctx.tell('试送已启动；停止后记录瓶内净质量。');
     }),
   );
+  // Source files can be updated while the older service still owns the serial
+  // connection. Keep manual controls usable until that service is restarted.
+  const sourceVolume = typeof window.ATPSSourceVolume === 'function' ? window.ATPSSourceVolume(ctx, page) : null;
+  if (!sourceVolume) ctx.node('p', '分来源体积标定页面尚未载入。请结束实验后重启新版程序；现有手动控制仍可使用。', page, {id: 'source-volume-unavailable'});
   const compatible = ctx.card(page, '当前项目的标定适用情况');
   const rows = ctx.node('div', null, compatible);
   return {
     render() {
+      sourceVolume?.render();
       if (!stockInitialized && (ctx.state.stocks || []).length) {
         stockInitialized = true;
         if (!stockDirty) stock.elements.port.onchange();

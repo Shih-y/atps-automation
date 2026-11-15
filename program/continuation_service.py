@@ -230,6 +230,18 @@ class ContinuationMixin:
             self.data['running'] = False
             self.cancel_dispatch.set()
 
+    @staticmethod
+    def _continuation_wait_for_other_bottles(run):
+        """Check the same waiting states regardless of which planning stage failed."""
+        states = {s['state'] for s in run['bottle_states'].values()}
+        if 'waiting_observation' in states:
+            run.update(status='waiting_observation', reason='等待其他瓶完成有限观察；局部规划失败只影响对应瓶')
+        elif 'waiting_review' in states:
+            run.update(status='waiting_review', reason='等待其他瓶人工复核；局部规划失败只影响对应瓶')
+        else:
+            return False
+        return True
+
     def _continuation_tick(self, device_state, now):
         run = self._get('continuation_runs', self.data['active_continuation_run_id'])
         if run['status'] not in ('running', 'waiting_review', 'waiting_observation', 'blocked'):
@@ -278,13 +290,9 @@ class ContinuationMixin:
             if state == 'ready':
                 ready.append(bottle)
         if not ready:
-            waiting = any(s['state']=='waiting_review' for s in run['bottle_states'].values())
-            observing=any(s['state']=='waiting_observation' for s in run['bottle_states'].values())
-            if observing:
-                run.update(status='waiting_observation',reason='各瓶正在进行有上限的自动观察')
-            elif waiting:
-                run.update(status='waiting_review',reason='等待人工复核，其他瓶可继续')
-            elif policy.get('mode')=='automatic':
+            if self._continuation_wait_for_other_bottles(run):
+                return None
+            if policy.get('mode')=='automatic':
                 self._continuation_finish(run,'exhausted','所有瓶均无可执行下一点：'+'; '.join(run['waiting_reasons'].values()))
             else:
                 run.update(status='blocked',reason='所选瓶位尚无已知物料，请处理瓶位或确认更换空瓶')
@@ -300,15 +308,17 @@ class ContinuationMixin:
             return None
         if candidate is None:
             diagnostics = run['planning_diagnostics']
+            if self._continuation_wait_for_other_bottles(run):
+                return None
             if diagnostics['theoretically_feasible'] == 0:
-                if any(s['state'] in ('waiting_review','waiting_observation') for s in run['bottle_states'].values()):
-                    run.update(status='waiting_observation' if policy.get('mode')=='automatic' else 'waiting_review',reason='已就绪瓶没有可达新点，等待其余瓶观察或复核')
-                else:
-                    self._continuation_finish(run,'exhausted','当前有限网格、容量及质量预算内没有可达新目标：'+'; '.join(diagnostics.get('rejection_reasons',{})))
+                self._continuation_finish(run,'exhausted','当前有限网格、容量及质量预算内没有可达新目标：'+'; '.join(diagnostics.get('rejection_reasons',{})))
             else:
                 reason='有界精编译未找到可执行方案；未证明全局无解：'+'; '.join(diagnostics.get('rejection_reasons',{}))
-                if policy.get('mode')=='automatic':self._continuation_finish(run,'exhausted',reason)
+                if policy.get('mode')=='automatic' and not diagnostics['exact_limit_reached']:
+                    self._continuation_finish(run,'exhausted','所选瓶在当前有限网格及标定下均无可执行新点：'+'; '.join(diagnostics.get('rejection_reasons',{})))
                 else:
+                    if diagnostics['exact_limit_reached']:
+                        reason='本轮有界精编译限额已到，尚有未检查点；请调整网格或运行设置后再规划。'+reason
                     run.update(status='paused',reason=reason)
                     self.data['running'] = False
                     self.cancel_dispatch.set()
@@ -317,7 +327,7 @@ class ContinuationMixin:
         return self._continuation_claim(run, project, candidate, training, epoch)
 
     def _continuation_choose(self, run, project, bottles, remaining, observation_s):
-        from continuation_domain import theoretical_addition
+        from continuation_domain import theoretical_addition, within_research_bounds
         training, anchors, coverage = [], [], []
         for sample in self.data['samples']:
             if sample.get('project_id') != project['id'] or sample['status']=='cancelled':
@@ -343,12 +353,16 @@ class ContinuationMixin:
             return distance*factor, phase, uncertainty
         bounds, step = run['bounds'], run['step']
         all_candidates = []
-        diagnostics = dict(theoretically_feasible=0, exact_evaluated=0, exact_limit_reached=False, coverage_anchor_count=len(anchors),rejection_reasons={})
+        diagnostics = dict(theoretically_feasible=0, exact_evaluated=0, exact_limit_reached=False, coverage_anchor_count=len(anchors),rejection_reasons={},by_bottle={})
         def rejected(issues):
             for issue in issues:
                 diagnostics['rejection_reasons'][issue]=diagnostics['rejection_reasons'].get(issue,0)+1
+                bottle_diagnostics['rejection_reasons'][issue]=bottle_diagnostics['rejection_reasons'].get(issue,0)+1
         for bottle in bottles:
             feasible = []
+            bottle_diagnostics = dict(theoretically_feasible=0, exact_evaluated=0, executable_candidates=0,
+                                      exact_limit_reached=False, rejection_reasons={})
+            diagnostics['by_bottle'][str(bottle['bottle'])] = bottle_diagnostics
             for i in range(int((bounds['peg_max']-bounds['peg_min'])/step+1e-8)+1):
                 peg = round(bounds['peg_min']+i*step, 9)
                 for j in range(int((bounds['salt_max']-bounds['salt_min'])/step+1e-8)+1):
@@ -360,10 +374,12 @@ class ContinuationMixin:
                                    total_mass_g=project.get('total_mass_g',1), safe_mass_limit_g=project.get('safe_mass_limit_g'),
                                    min_initial_mass_g=run.get('min_initial_mass_g',project.get('total_mass_g',1)),reserve_mass_g=run.get('reserve_mass_g',0),
                                    source_mass_remaining_g=remaining.get('source_mass_g',{}),
+                                   research_bounds=copy.deepcopy(bounds),
                                    max_added_mass_g=remaining['added_mass_g'], remaining_time_s=remaining['time_s']-observation_s)
                     try:
                         theoretical = theoretical_addition(request, bottle['inventory'], project['stocks'])
-                    except ValueError:
+                    except ValueError as exc:
+                        rejected([str(exc)])
                         continue
                     if not theoretical.get('reachable'):
                         rejected(theoretical.get('issues',[]))
@@ -371,19 +387,27 @@ class ContinuationMixin:
                     preliminary = score(peg, salt)[0]
                     feasible.append((preliminary, -theoretical['added_mass_g'], request))
             feasible.sort(key=lambda v:(v[0],v[1]), reverse=True)
+            bottle_diagnostics['theoretically_feasible'] = len(feasible)
+            bottle_diagnostics['exact_limit_reached'] = len(feasible)>run['planning_limits']['exact_per_bottle']
             diagnostics['theoretically_feasible'] += len(feasible)
-            diagnostics['exact_limit_reached'] |= len(feasible)>run['planning_limits']['exact_per_bottle']
+            diagnostics['exact_limit_reached'] |= bottle_diagnostics['exact_limit_reached']
             for _, _, request in feasible[:run['planning_limits']['exact_per_bottle']]:
                 diagnostics['exact_evaluated'] += 1
+                bottle_diagnostics['exact_evaluated'] += 1
                 preview = self._continuation_preview(request)
                 if not preview['executable'] or preview['added_mass_g'] <= 0:
                     rejected(preview.get('issues',[]))
                     continue
                 composition = preview['composition']
                 peg, salt = composition['peg_fraction'], composition['salt_fraction']
+                if not within_research_bounds(peg, salt, bounds):
+                    rejected(['编译后预计组成超出研究范围'])
+                    continue
                 if any(abs(peg-p)<1e-9 and abs(salt-q)<1e-9 for p,q in anchors):
+                    rejected(['取整后与已有采用组成相同，不重复自动建点'])
                     continue
                 value, phase, uncertainty = score(peg,salt)
+                bottle_diagnostics['executable_candidates'] += 1
                 all_candidates.append(dict(bottle=bottle['bottle'], target=preview['target'], composition=composition,
                                            preview=preview, inventory_key=preview['inventory_key'],
                                            selection_score=value, classification_score=phase, uncertainty=uncertainty,
@@ -391,6 +415,12 @@ class ContinuationMixin:
                                            data_regime='no_valid_labels' if not training else 'one_class' if len(classes)<2 else 'two_classes',
                                            initial_empty=bottle['inventory'].get('total_mass_g',0)<=1e-12,
                                            estimated_duration_s=preview['estimated_duration_s'], added_mass_g=preview['added_mass_g']))
+            if not bottle_diagnostics['executable_candidates']:
+                reason = '; '.join(bottle_diagnostics['rejection_reasons']) or '有限网格内无未探索的可达新点'
+                number = str(bottle['bottle'])
+                run['bottle_states'].setdefault(number, dict(sample_id=bottle.get('sample_id'))).update(
+                    state='planning_blocked' if feasible else 'no_reachable_point', reason=reason)
+                run['waiting_reasons'][number] = reason
         run['planning_diagnostics'] = diagnostics
         run['coverage_snapshot'] = coverage
         if not all_candidates:

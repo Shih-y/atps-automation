@@ -1,9 +1,11 @@
 """Explicit unvalidated manual operations; never invent liquid observations."""
 import copy
 import math
+import secrets
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP
 from capture_store import timestamp
 from tube_workflows import AIR
+from experiment_domain import plumbing_signature
 
 class FreeDebugMixin:
     def _stock_calibration_plan(self,payload):
@@ -21,11 +23,13 @@ class FreeDebugMixin:
         row=dict(source=source,sample=sample,chunks=[parameters['aspirate']['steps']]*count,
                  parameters=[dict(source=source,sample=sample,**copy.deepcopy(parameters)) for _ in range(count)],
                  completed=False,completed_plugs=0,actual_ml=None)
-        return dict(sample=sample,items=[row],total_plugs=count,completed_plugs=0,
+        collection_context=dict(source=source,sample=sample,doses=count,stock_snapshot=self._volume_stock(source),
+                                geometry_signature=plumbing_signature(self.config,source),**copy.deepcopy(parameters))
+        return dict(id=secrets.token_hex(16),collection_context=collection_context,sample=sample,items=[row],total_plugs=count,completed_plugs=0,
                     total_commands=2*count+1,completed_commands=0,current=None,mix_after=False,purge_after=True,
                     mixing=None,purge=purge,mixing_performed=False,purge_performed=False,
                     completed=False,cancelled=False,started_at=timestamp(),actual_ml=None,volume_verified=False,
-                    uncertainty_note='来源质量交付标定收集动作；实测称量尚未录入',method='sample_endpoint_group_mass')
+                    uncertainty_note='来源样品出口标定收集动作；实际质量或体积读数尚未录入',method='sample_endpoint_collection')
 
     @property
     def free_debug(self):
@@ -68,6 +72,8 @@ class FreeDebugMixin:
         source=number(payload.get('source'),10,15,'来源口',True)
         sample=number(payload.get('sample'),1,6,'样品口',True)
         ml=number(payload.get('volume_ml'),.001,10,'本次体积mL（10 mL瓶，需自行扣除已有液体）')
+        source_plan=self._source_volume_plan(source,sample,ml)
+        if source_plan is not None:return source_plan
         ref=self.water_dose_reference;refp=ref.get('parameters',{})
         mean=number(ref.get('mean_per_dose_ml'),.01,1,'单剂体积参考mL')
         steps=number(refp.get('aspirate_steps'),1,100,'参考吸取步数',True)
@@ -94,6 +100,7 @@ class FreeDebugMixin:
                 pulse_checked(p[key]);number(p[key]['rpm'],.1,min(100,self.config['pump']['max_rpm']),'配置允许转速')
             parameters.append(p)
         return dict(requested_ml=ml,estimated_ml=total*mean/steps,total_steps=total,chunks=chunks,
+                    calibration_basis='legacy_water_unvalidated',uncertainty_note='旧清水参考比例估算，当前来源母液实际交付量未经验证',
                     delivery_mode='segmented' if count>1 else 'single_shot',mixing_performed=False,
                     source=source,sample=sample,parameters=parameters,reference=copy.deepcopy(ref),
                     actual_ml=None,volume_verified=False,completed=False,completed_plugs=0,started_at=timestamp())

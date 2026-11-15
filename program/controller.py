@@ -20,6 +20,7 @@ from bench_calibration import BenchMixin
 from tube_workflows import TubeMixin
 from free_debug import FreeDebugMixin
 from motion_planning import motion_plan
+from source_volume_calibration import SourceVolumeMixin
 
 ALLOWED_PORTS = set(range(1, 7)) | set(range(10, 17))
 MAX_STEPS, MAX_RPM, MAX_SECONDS = 20000, 100, 120
@@ -113,7 +114,7 @@ def validate_profile(p, cfg, require_validated=True):
         if p.get('bubble_validated') is not True: pass  # bubbling is a separate opt-in gate
     return p
 
-class Controller(BenchMixin, TubeMixin, FreeDebugMixin):
+class Controller(BenchMixin, TubeMixin, FreeDebugMixin, SourceVolumeMixin):
     def __init__(self, directory, default_path=None, hardware_factory=None):
         self.directory = Path(directory); self.directory.mkdir(parents=True, exist_ok=True)
         self.default_path = Path(default_path or Path(__file__).with_name('config.default.json'))
@@ -127,6 +128,7 @@ class Controller(BenchMixin, TubeMixin, FreeDebugMixin):
         self.state = 'DISCONNECTED'; self.message = '扫描 CH340 或手动选择串口，连接后选择要执行的步骤。程序启动不连接或驱动设备。'
         self.prompt = None; self.answer = None; self.logs = []; self.commission_count = 0
         self.capture = CaptureStore(self.directory); self.capture.archive()
+        self._load_source_volumes()
         self._unknown()
 
     def _unknown(self):
@@ -161,7 +163,7 @@ class Controller(BenchMixin, TubeMixin, FreeDebugMixin):
             return copy.deepcopy(dict(mode=self.mode,free_debug=self.free_debug,connected=self.connected,busy=self.busy or self._user_stopping,state=self.state,
                 message=self.message,stop_status=self.stop_status,next_step=self.prompt['message'] if self.prompt else self.message,prompt=self.prompt,
                 common=self.common,reset_sequence=self.reset_sequence,pending_plug=self._pending_view(),selected_port=self.selected_port,
-                sources=self.sources,samples=self.samples,logs=self.logs,
+                sources=self.sources,samples=self.samples,logs=self.logs,source_volume_calibrations=self.source_volume_calibrations,
                 config=self.config,geometry_signature=signature(self.config),profiles=self.profiles(),imaging=self.capture.current,
                 bench=self.bench,tubes=self.tubes,volume_run=self.volume_run,recipe_run=self.recipe_run,bulk_water_reference=self.bulk_water_reference,water_dose_reference=self.water_dose_reference,motion_plan=motion_plan(self.config),
                 hardware_status=self.hardware.get_telemetry() if self.hardware and hasattr(self.hardware,'get_telemetry') else None))

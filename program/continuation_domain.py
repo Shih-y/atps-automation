@@ -17,6 +17,29 @@ MAX_SEGMENTS = 60
 NEIGHBOR_RADIUS = 2
 
 
+def research_bounds(value):
+    """Optional inclusive hard bounds, independent of target-error tolerance."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError('研究范围须包含PEG和盐的上下限')
+    result = {}
+    for component in ('peg', 'salt'):
+        lower = domain.num(value.get(component+'_min'), 0, 1)
+        upper = domain.num(value.get(component+'_max'), lower, 1)
+        result[component+'_min'], result[component+'_max'] = lower, upper
+    return result
+
+
+def within_research_bounds(peg, salt, bounds):
+    if bounds is None:
+        return True
+    # Only absorb floating-point roundoff; never reuse the recipe tolerance.
+    return all(isinstance(v, (int, float)) and math.isfinite(v)
+               and bounds[c+'_min']-1e-12 <= v <= bounds[c+'_max']+1e-12
+               for c, v in (('peg', peg), ('salt', salt)))
+
+
 def inventory_key(inventory):
     """Freeze all supplied provenance as well as the material/revision values."""
     return hashlib.sha256(json.dumps(inventory, sort_keys=True, ensure_ascii=False,
@@ -64,6 +87,9 @@ def theoretical_addition(request, inventory, stocks):
     """
     salt_port = domain.integer(request['salt_port'], 10, 13)
     peg, salt = domain._coordinate_pair(request)
+    bounds = research_bounds(request.get('research_bounds'))
+    if not within_research_bounds(peg, salt, bounds):
+        raise ValueError('目标组成超出研究范围')
     limit = request.get('safe_mass_limit_g')
     limit = domain.num(limit, 1e-6, 10) if limit is not None else None
     budget = domain.num(request.get('max_added_mass_g', 10000), 0, 10000)
@@ -80,7 +106,7 @@ def theoretical_addition(request, inventory, stocks):
                   safe_mass_limit_g=limit, composition_tolerance_fraction=tolerance,
                   total_mass_g=None, allow_trial_calibration=request.get('allow_trial_calibration',True),
                   min_initial_mass_g=initial_floor, reserve_mass_g=reserve,
-                  source_mass_remaining_g=source_budget)
+                  source_mass_remaining_g=source_budget, research_bounds=bounds)
     result = dict(reachable=False, executable=False, issues=[], target=target,
                   initial_inventory=copy.deepcopy(inventory), inventory_key=inventory_key(inventory),
                   final_mass_g=None, theoretical_added_mass_g=None, added_mass_g=None,
@@ -288,7 +314,7 @@ def preview_addition(request, inventory, stocks, calibrations, geometry_signatur
     tolerance = result['target']['composition_tolerance_fraction']
     best = None
     seen = set()
-    rejected_time = rejected_capacity = rejected_source = False
+    rejected_time = rejected_capacity = rejected_source = rejected_bounds = False
     for final in sorted(final_masses):
         ideal = {14:(peg*final-pg)/cp,salt_port:(salt*final-sg)/cs,15:d*final-k}
         if any(v < -EPS for v in ideal.values()):
@@ -314,6 +340,9 @@ def preview_addition(request, inventory, stocks, calibrations, geometry_signatur
                 continue
             peg_mass, salt_mass = pg+masses[14]*cp, sg+masses[salt_port]*cs
             adopted_peg, adopted_salt = peg_mass/total,salt_mass/total
+            if not within_research_bounds(adopted_peg, adopted_salt, theory['target']['research_bounds']):
+                rejected_bounds = True
+                continue
             error = max(abs(adopted_peg-peg),abs(adopted_salt-salt))
             if error>tolerance+1e-12:
                 continue
@@ -338,6 +367,7 @@ def preview_addition(request, inventory, stocks, calibrations, geometry_signatur
         if rejected_capacity:result['issues'].append('量化后的最终质量超出容量或剩余补加质量预算')
         if rejected_source:result['issues'].append('量化后的补量超出来源剩余质量预算')
         if rejected_time:result['issues'].append('预计补加动作时间超过剩余墙钟时间预算')
+        if rejected_bounds:result['issues'].append('整数步量化后的预计组成超出研究范围；组成误差限不会放宽研究边界')
         return finish()
     rank,masses,chunks,estimated = best
     rows = []

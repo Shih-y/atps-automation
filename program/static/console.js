@@ -71,6 +71,20 @@
   bind('manualRead',()=>action('read_status'));
   bind('manualRun',()=>action('manual_motion',{port:Number($('manualPort').value),rotation:$('manualRotation').value,rpm:numeric('manualRpm','转速',.1,100),turns:numeric('manualTurns','圈数',1,100,true)}));
   for(const [id,name] of [['washBtn','wash'],['purgeBtn','purge'],['washPurgeBtn','reset']])bind(id,()=>action(name));
+  const recipeCalibration = node('p', '点击预览可核查各来源的当前标定；预览不启动泵。', {id:'recipeCalibrationPreview',class:'result'});
+  const recipePreviewButton = node('button','预览各来源标定与步数（不动作）',{id:'recipePreviewBtn',type:'button'});
+  $('recipeStart').before(recipePreviewButton,recipeCalibration);
+  const recipeFingerprint = () => JSON.stringify([$('recipeSample').value,...sources.map(p=>$('volume'+p).value)]);
+  bind('recipePreviewBtn',async()=>{
+    const fingerprint=recipeFingerprint(), sample=Number($('recipeSample').value),lines=[];
+    for(const source of sources){
+      const volume_ml=numeric('volume'+source,`${source}口体积`,0,10);if(!volume_ml)continue;
+      try {const {plan:p}=await api('/api/source-volume-preview',{source,sample,volume_ml});lines.push(`${source}口 → ${sample}号瓶：${p.calibration_basis==='source_endpoint_trial'?'本来源端点实测试用参考':'旧清水参考（母液未验证）'}；${p.total_steps}步，估计 ${p.estimated_ml} mL；参考 ${p.reference?.id || '旧清水参考'}；分段步数 ${(p.chunks || []).join('、')}。${(p.parameters || []).map((v,i)=>`第${i+1}段吸取${v.aspirate.steps}步/${v.aspirate.rpm} rpm、追送${v.chase.steps}步/${v.chase.rpm} rpm`).join('；')}。${p.uncertainty_note || '实际体积待测；单剂重复性未验证'}`);}
+      catch(e){lines.push(`${source}口：不适用 / ${e.message}`);}
+    }
+    if(fingerprint===recipeFingerprint())recipeCalibration.textContent=lines.join('\n') || '请先填写至少一个来源体积。';
+  },'配方标定预览已更新；未启动泵。',false);
+  for(const id of ['recipeSample',...sources.map(p=>'volume'+p)])$(id).addEventListener('input',()=>{recipeCalibration.textContent='参数已改变，请重新预览各来源标定。';});
   bind('recipeStart',()=>{
     const items=sources.map(source=>({source,volume_ml:numeric('volume'+source,`${source}口体积`,0,10)})).filter(r=>r.volume_ml>0);
     if(!items.length)throw Error('请至少填写一项大于 0 的体积');
@@ -100,7 +114,7 @@
     const values=sources.map(p=>Number($('volume'+p).value));
     const total=values.reduce((sum,n)=>sum+n,0),ref=state.water_dose_reference,p=ref?.parameters;
     $('recipePreview').textContent=values.every(n=>Number.isFinite(n)&&n>=0)?`本次合计 ${Number(total.toFixed(4))} mL（请求量）。整数步数会取整；实际体积待测。`:'请检查各来源体积。';
-    $('referenceSummary').textContent=p&&ref.mean_per_dose_ml?`当前保存参考：${p.aspirate_steps}步 ≈ ${ref.mean_per_dose_ml} mL；吸取 ${p.aspirate_rpm} rpm，基础追送 ${p.chase_steps}步 / ${p.chase_rpm} rpm。仅用于步数估算；追送参数改变后，实际交付量需复测。`:'尚未读取保存参考；等待服务。';
+    $('referenceSummary').textContent=p&&ref.mean_per_dose_ml?`旧清水参考（母液未验证）：${p.aspirate_steps}步 ≈ ${ref.mean_per_dose_ml} mL；吸取 ${p.aspirate_rpm} rpm，基础追送 ${p.chase_steps}步 / ${p.chase_rpm} rpm。仅在该来源无专属体积记录时作为未验证手动参考；有来源记录但条件不符时会阻止执行，请用预览查看原因。追送参数改变后需复测。`:'尚未读取保存参考；等待服务。';
   }
   function renderTelemetry(available=true) {
     const h=state.hardware_status;

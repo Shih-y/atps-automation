@@ -4,10 +4,11 @@ import tempfile
 import unittest
 from controller import Controller
 from fakes import DemoHardware
+from experiment_domain import default_stocks
 
 
 class LabRecorder:
-    def __init__(self): self.events=[]; self.manual=[]
+    def __init__(self): self.events=[]; self.manual=[]; self.data=dict(stocks=default_stocks())
     def before_manual(self, payload): self.manual.append(copy.deepcopy(payload))
     def on_action_event(self, event, payload, plan=None, error=None):
         self.events.append((event, copy.deepcopy(payload), copy.deepcopy(plan), error))

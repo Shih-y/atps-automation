@@ -87,7 +87,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(c.capture.image_path(parts[3],parts[4]).read_bytes(),mime='image/png')
             if path in ('/','/index.html'): return self.reply((self.server.static/'index.html').read_bytes(),mime='text/html; charset=utf-8')
             if path in ('/app.js','/bench.js','/live.js','/tubes.js','/free.js','/style.css','/console.js','/console.css','/phase_analysis.js','/lab.js','/lab.css',
-                        '/lab-equipment.js','/lab-design.js','/lab-monitor.js','/lab-review.js','/lab-model.js','/lab-data.js'):
+                        '/lab-equipment.js','/lab-source-volume.js','/lab-design.js','/lab-monitor.js','/lab-review.js','/lab-model.js','/lab-data.js'):
                 mime='text/javascript; charset=utf-8' if path.endswith('.js') else 'text/css; charset=utf-8'
                 return self.reply((self.server.static/path[1:]).read_bytes(),mime=mime)
             return self.reply({'ok':False,'error':'未找到'},404)
@@ -120,6 +120,8 @@ class Handler(BaseHTTPRequestHandler):
             elif path=='/api/calibration/report': return self.reply(c.calibration_report(body))
             elif path=='/api/bench/report': return self.reply(c.bench_report(body))
             elif path=='/api/reference': return self.reply(c.update_dose_reference(body))
+            elif path=='/api/source-volume-calibration': return self.reply(c.save_source_volume_calibration(body))
+            elif path=='/api/source-volume-preview': return self.reply(c.preview_source_volume(body))
             elif path=='/api/imaging/begin': return self.reply(c.begin_imaging(body))
             elif path=='/api/action':
                 if body.get('action')=='experiment_recipe':raise ValueError('自动实验只能从已编译的实验队列启动')

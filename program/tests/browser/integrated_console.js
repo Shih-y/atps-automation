@@ -68,7 +68,7 @@ async function until(fn){for(let i=0;i<100;i++){if(await fn())return;await new P
   check('next recipe uses updated endpoint reference',(await state()).recipe_run.items[0].total_steps===90);
   await page.locator('#stopBtn').click();await until(async()=>(await state()).state==='STOPPED');
   check('UI stop preserves actual fake shared connection',(await state()).connected===true);
-  check('no browser errors or camera calls',errors.length===0&&await page.evaluate(()=>cameraCalls)===0);
+  check('no browser errors or camera calls: '+JSON.stringify(errors),errors.length===0&&await page.evaluate(()=>cameraCalls)===0);
   console.log(JSON.stringify({passed:checks.length,errors}));
 })().catch(e=>{console.error(e);process.exitCode=1;}).finally(async()=>{
   if(browser)await browser.close();

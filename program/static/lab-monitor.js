@@ -325,10 +325,13 @@ window.ATPSLabPages.monitor = (ctx, page) => {
           (run.bottles || []).map((b) => {
             const bottle = (ctx.state.bottles || []).find((x) => x.bottle === b),
               sample = (ctx.state.samples || []).find((s) => s.id === bottle?.sample_id);
-            const reason = run.waiting_reasons?.[b] || run.bottle_states?.[b]?.reason;
+            const bottleState = run.bottle_states?.[b];
+            const diagnostic = run.diagnostics?.by_bottle?.[b];
+            const reason = run.waiting_reasons?.[b] || bottleState?.reason || diagnostic?.reason;
+            const status = {planning_blocked: '本瓶规划受阻', no_reachable_point: '本瓶无范围内可达点'}[bottleState?.status || bottleState?.state];
             return [
               b,
-              reason ||
+              (status ? `${status}；${reason || (diagnostic ? JSON.stringify(diagnostic) : '请查看规划记录')}` : reason) ||
                 (!bottle?.inventory?.known
                   ? '瓶内物料未知'
                   : !sample
