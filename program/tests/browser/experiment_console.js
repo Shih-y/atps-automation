@@ -8,6 +8,7 @@ const state={stocks:[],calibrations:[],compatible_calibrations:{},samples:[],pro
 function reply(res,data,status=200){res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(data));}
 const sample=(id,project,bottle)=>({id,project_id:project,bottle,execution_state:'queued',status:'queued',target:{peg_fraction:.05,salt_fraction:.05},composition:{basis:'estimated',peg_fraction:.04,salt_fraction:.04,valid:true},review_state:'unreviewed',training_eligibility:{eligible:false,reasons:['未复核']},frames:[],generation:0,exclusions:[]});
 let server,browser,failNextCapture=false,loseEnqueueResponse=true,loseApprovalResponse=true;
+let hardwareUnavailable=false,labUnavailable=false;
 const acceptedEnqueues=new Set();
 async function until(fn){for(let i=0;i<100;i++){if(await fn())return;await new Promise(r=>setTimeout(r,50));}throw Error('Timed out');}
 const check=(name,value)=>{assert(value,name);console.log('PASS '+name);};
@@ -16,10 +17,10 @@ const check=(name,value)=>{assert(value,name);console.log('PASS '+name);};
     if(req.url.startsWith('/api/')){
       let raw='';for await(const chunk of req)raw+=chunk;const body=raw?JSON.parse(raw):{};if(req.method==='POST')calls.push({url:req.url,body});
       if(req.url==='/api/token')return reply(res,{token:'test'});
-      if(req.url==='/api/state')return reply(res,hardware);
+      if(req.url==='/api/state')return reply(res,hardwareUnavailable?{error:'injected hardware outage'}:hardware,hardwareUnavailable?503:200);
       if(req.url==='/api/serial-ports')return reply(res,{ports:[],ch340_ports:[]});
       if(req.url==='/api/stop'){state.stop_status='confirmed';return reply(res,{ok:true,state:hardware});}
-      if(req.url==='/api/lab/state')return reply(res,state);
+      if(req.url==='/api/lab/state')return reply(res,labUnavailable?{error:'injected lab outage'}:state,labUnavailable?503:200);
       const op=req.url.split('/').pop();let out={ok:true};
       if(op==='stock')state.stocks.push(body);
       if(op==='calibration')state.calibrations.push(body);
@@ -82,5 +83,30 @@ const check=(name,value)=>{assert(value,name);console.log('PASS '+name);};
   const stops=calls.filter(c=>c.url==='/api/stop').length;await page.locator('#lab-stop').click();await until(()=>calls.filter(c=>c.url==='/api/stop').length===stops+1);check('bottom stop uses one priority device stop request',true);
   const out=path.join(__dirname,'test_output','experiment_console');fs.mkdirSync(out,{recursive:true});
   for(const [i,name] of ['设备与校准','实验设计','运行监控','图像判相与复核','相图与主动学习','数据与报告'].entries()){await tab(name);await page.screenshot({path:path.join(out,'page-'+(i+1)+'.png'),fullPage:true});}
+  state.projects[1].name='UnbrokenProjectName'.repeat(12);
+  await page.evaluate(async()=>{document.documentElement.classList.add('desktop-shell');await ATPSLab.refresh();});
+  for(const width of [1440,1100,360]){
+    await page.setViewportSize({width,height:900});
+    for(const name of ['设备与校准','实验设计','运行监控','图像判相与复核','相图与主动学习','数据与报告']){
+      await tab(name);
+      const box=await page.locator('#lab-stop').boundingBox();
+      assert(box&&box.x>=0&&box.x+box.width<=width&&box.y+box.height<=900,'persistent stop remains inside viewport');
+      await page.locator('#lab-stop').click({trial:true});
+    }
+  }
+  check('long unbroken active-project name cannot displace the persistent stop at desktop or phone widths',true);
+  await page.setViewportSize({width:1100,height:900});await tab('设备与校准');
+  await page.locator('#workspace').evaluate(e=>e.scrollTop=e.scrollHeight);
+  hardwareUnavailable=true;labUnavailable=true;
+  await page.waitForFunction(()=>document.querySelector('#lab-status').dataset.serviceUnavailable==='true');
+  await until(async()=>await page.locator('#lab-status-text').innerText().then(t=>t.includes('服务不可用')&&!t.includes('已确认停止')));
+  assert(await page.locator('#lab-status-text').isVisible());
+  assert(await page.locator('#workspace').evaluate(e=>e.scrollTop>0));
+  hardwareUnavailable=false;
+  await page.waitForFunction(()=>ATPSLab.serviceHealth.hardware===true&&ATPSLab.serviceHealth.lab===false);
+  check('service-outage warning stays in fixed footer while scrolled and until both state sources recover',await page.locator('#lab-status-text').innerText().then(t=>t.includes('服务不可用')));
+  labUnavailable=false;
+  await page.waitForFunction(()=>document.querySelector('#lab-status').dataset.serviceUnavailable==='false');
+  check('fresh state from both sources clears outage warning',!await page.locator('#lab-status-text').innerText().then(t=>t.includes('服务不可用')));
   assert.deepEqual(errors,[]);console.log('PASS six-page regression completed without physical devices');
 })().catch(e=>{console.error(e);process.exitCode=1;}).finally(async()=>{if(browser)await browser.close();if(server){server.closeAllConnections();await new Promise(r=>server.close(r));}});

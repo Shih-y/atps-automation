@@ -1,7 +1,6 @@
 'use strict';
 (() => {
   const controls = document.getElementById('windowControls');
-  const dragArea = document.querySelector('.window-drag-area');
   const maximize = document.getElementById('windowMaximize');
   let api;
   function update(state) {
@@ -23,11 +22,10 @@
     api = window.pywebview.api;
     controls.hidden = false;
     document.documentElement.classList.add('desktop-shell');
-    dragArea.classList.add('pywebview-drag-region');
     document.getElementById('windowMinimize').addEventListener('click', () => action('minimize'));
     maximize.addEventListener('click', () => action('toggle_maximize'));
     document.getElementById('windowClose').addEventListener('click', () => action('close'));
-    dragArea.addEventListener('dblclick', () => action('toggle_maximize'));
+    window.addEventListener('atps:window-state', (event) => update(event.detail));
     window.addEventListener('focus', () => action('window_state'));
     action('window_state');
   }
@@ -181,8 +179,8 @@
   }
   async function poll() {
     if(polling)return;polling=true;
-    try { state=await api('/api/state');render(); }
-    catch(e){renderTelemetry(false);$('serverMessage').textContent='服务不可用：'+e.message;}
+    try { state=await api('/api/state');render();window.ATPSLab?.setServiceHealth('hardware',true); }
+    catch(e){renderTelemetry(false);$('serverMessage').textContent='服务不可用：'+e.message;window.ATPSLab?.setServiceHealth('hardware',false);}
     finally{polling=false;}
   }
   async function listCameras() {

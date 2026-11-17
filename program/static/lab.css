@@ -21,6 +21,10 @@
 .lab-gallery p{font-size:12px}.candidate-list{width:100%;display:grid;gap:8px}.candidate-list label{max-width:none;flex-direction:row;align-items:center}
 #lab-status{position:fixed;bottom:0;left:0;right:0;display:flex;gap:12px;justify-content:space-between;align-items:center;background:#252525;color:#fff;padding:10px 24px;font-size:13px;z-index:30;box-shadow:0 -2px 8px #0002}
 #lab-status button{color:#111;background:#fff;border:1px solid #ccc;white-space:nowrap;margin:0;font-weight:bold;flex-shrink:0}
+#lab-status{min-width:0;max-width:100%}
+#lab-status-text{display:block;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#lab-status[data-service-unavailable=true]{background:#742b25}
+#lab-status[data-service-unavailable=true] #lab-status-text{white-space:normal;overflow-wrap:anywhere;font-weight:bold}
 #export-project{display:inline-block;padding:9px 13px;border:1px solid #888;border-radius:4px;margin-right:10px}
 #phase-diagram{display:block;background:white;width:100%;max-width:1000px}
 .candidate-description{white-space:pre-line;line-height:1.7}.candidate-list label{padding:10px 0;border-bottom:1px solid #ddd}.candidate-list input[type=checkbox]{flex-shrink:0;width:18px}

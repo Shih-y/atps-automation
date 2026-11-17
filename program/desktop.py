@@ -6,6 +6,7 @@ window only renders the same pages a browser would.
 """
 import argparse
 import functools
+import json
 import logging
 import os
 import sys
@@ -35,18 +36,27 @@ class WindowControls:
 
     def _on_maximized(self):
         self._maximized = True
+        self._notify_state()
 
     def _on_restored(self):
         self._maximized = False
+        self._notify_state()
+
+    def _notify_state(self):
+        if self._window.events.loaded.is_set():
+            self._window.evaluate_js("window.dispatchEvent(new CustomEvent('atps:window-state',"
+                                     "{detail:" + json.dumps(self.window_state()) + "}))")
 
     def window_state(self):
-        return {'maximized': self._maximized}
+        native = getattr(self._window, 'native', None)
+        maximized = str(native.WindowState) == 'Maximized' if native is not None else self._maximized
+        return {'maximized': maximized}
 
     def minimize(self):
         self._window.minimize()
 
     def toggle_maximize(self):
-        if self._maximized:
+        if self.window_state()['maximized']:
             self._window.restore()
             self._maximized = False
         else:
@@ -56,7 +66,6 @@ class WindowControls:
 
     def close(self):
         self._window.destroy()
-
 
 def enable_window_resize(window):
     """Keep native sizing while extending the page through the top frame.
@@ -82,7 +91,41 @@ def enable_window_resize(window):
     user32.IsZoomed.restype = wintypes.BOOL
     user32.GetDpiForWindow.argtypes = [wintypes.HWND]
     user32.GetDpiForWindow.restype = wintypes.UINT
+    user32.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.ReleaseCapture.argtypes = []
+    user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    user32.SendMessageW.restype = ctypes.c_ssize_t
+    user32.CreateWindowExW.argtypes = [wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR,
+                                     wintypes.DWORD, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                     ctypes.c_int, wintypes.HWND, wintypes.HMENU,
+                                     wintypes.HINSTANCE, ctypes.c_void_p]
+    user32.CreateWindowExW.restype = wintypes.HWND
+    user32.SetLayeredWindowAttributes.argtypes = [wintypes.HWND, wintypes.DWORD,
+                                                 wintypes.BYTE, wintypes.DWORD]
+    user32.SetLayeredWindowAttributes.restype = wintypes.BOOL
+    user32.UpdateWindow.argtypes = [wintypes.HWND]
     hwnd = window.native.Handle.ToInt64()
+    # pywebview has already converted these sizes to physical pixels. Align
+    # WinForms' design DPI before its first visible layout so it does not scale
+    # the minimum size a second time on high-DPI displays.
+    from System.Drawing import Size
+    window.native.AutoScaleDimensions = window.native.CurrentAutoScaleDimensions
+    scale = user32.GetDpiForWindow(hwnd) / 96
+    window.native.MinimumSize = Size(round(window.min_size[0]*scale), round(window.min_size[1]*scale))
+    resize_grip = [None]
+
+    def layout_resize_grip():
+        grip = resize_grip[0]
+        if not grip:
+            return
+        if user32.IsZoomed(hwnd):
+            user32.ShowWindow(grip, 0)
+        else:
+            rect = wintypes.RECT()
+            user32.GetClientRect(hwnd, ctypes.byref(rect))
+            height = max(4, round(6 * user32.GetDpiForWindow(hwnd) / 96))
+            user32.SetWindowPos(grip, None, 0, 0, rect.right, height, 0x0050)
     comctl32 = ctypes.WinDLL('comctl32', use_last_error=True)
     subclass_type = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT,
                                       wintypes.WPARAM, wintypes.LPARAM,
@@ -99,7 +142,17 @@ def enable_window_resize(window):
     @subclass_type
     def frame_proc(handle, message, wparam, lparam, subclass_id, reference):
         try:
-            if message == 0x0083 and lparam:  # WM_NCCALCSIZE
+            if handle == resize_grip[0]:
+                if message == 0x0084:  # WM_NCHITTEST on our native child
+                    rect = wintypes.RECT()
+                    user32.GetWindowRect(handle, ctypes.byref(rect))
+                    x = ctypes.c_short(lparam & 0xffff).value
+                    corner = round(16 * user32.GetDpiForWindow(hwnd) / 96)
+                    return 13 if x < rect.left+corner else 14 if x >= rect.right-corner else 12
+                if message == 0x00A1:  # WM_NCLBUTTONDOWN: immediate UI-thread routing
+                    user32.ReleaseCapture()
+                    return user32.SendMessageW(hwnd, message, wparam, lparam)
+            if handle == hwnd and message == 0x0083 and lparam:  # WM_NCCALCSIZE
                 rect = ctypes.cast(lparam, ctypes.POINTER(wintypes.RECT)).contents
                 proposed_top = rect.top
                 result = comctl32.DefSubclassProc(handle, message, wparam, lparam)
@@ -108,12 +161,16 @@ def enable_window_resize(window):
                     # blank top strip introduced by WS_THICKFRAME.
                     rect.top = proposed_top
                 return result
-            if message == 0x0084 and not user32.IsZoomed(handle):  # WM_NCHITTEST
+            if handle == hwnd and message in (0x0005, 0x02E0):  # WM_SIZE / WM_DPICHANGED
+                result = comctl32.DefSubclassProc(handle, message, wparam, lparam)
+                layout_resize_grip()
+                return result
+            if message == 0x0084 and not user32.IsZoomed(hwnd):  # WM_NCHITTEST
                 rect = wintypes.RECT()
-                user32.GetWindowRect(handle, ctypes.byref(rect))
+                user32.GetWindowRect(hwnd, ctypes.byref(rect))
                 x = ctypes.c_short(lparam & 0xffff).value
                 y = ctypes.c_short((lparam >> 16) & 0xffff).value
-                edge = max(4, round(8 * user32.GetDpiForWindow(handle) / 96))
+                edge = max(4, round(8 * user32.GetDpiForWindow(hwnd) / 96))
                 if rect.top <= y < rect.top + edge:
                     if rect.left <= x < rect.left + edge:
                         return 13  # HTTOPLEFT
@@ -132,6 +189,7 @@ def enable_window_resize(window):
     window._native_frame_callback = frame_proc
     if not comctl32.SetWindowSubclass(hwnd, frame_proc, 1, 0):
         raise ctypes.WinError(ctypes.get_last_error())
+
     style = user32.GetWindowLongPtrW(hwnd, -16)  # GWL_STYLE
     ctypes.set_last_error(0)
     previous = user32.SetWindowLongPtrW(hwnd, -16, (style | 0x00040000) & ~0x00C00000)
@@ -140,6 +198,21 @@ def enable_window_resize(window):
     # Refresh cached non-client geometry without moving, resizing or activating.
     if not user32.SetWindowPos(hwnd, None, 0, 0, 0, 0, 0x0037):
         raise ctypes.WinError(ctypes.get_last_error())
+    # The renderer HWND belongs to another process. Cover just the top sizing
+    # strip with an input child we own, rather than subclassing foreign HWNDs.
+    # Alpha 1 keeps hit testing enabled (alpha 0 would pass pointer input through)
+    # while the page remains visible underneath, with no reserved blank strip.
+    grip = user32.CreateWindowExW(0x00080000, 'STATIC', None, 0x50000100,
+                                  0, 0, 1, 1, hwnd, None, None, None)
+    if not grip:
+        raise ctypes.WinError(ctypes.get_last_error())
+    resize_grip[0] = grip
+    if not comctl32.SetWindowSubclass(grip, frame_proc, 1, 0):
+        raise ctypes.WinError(ctypes.get_last_error())
+    if not user32.SetLayeredWindowAttributes(grip, 0, 1, 2):
+        raise ctypes.WinError(ctypes.get_last_error())
+    layout_resize_grip()
+    user32.UpdateWindow(grip)
 
 
 def default_data_dir():
@@ -215,6 +288,7 @@ def allow_camera(window, origin):
             logging.exception('camera permission handler failed')
 
     def attach(core):
+        core.Settings.IsNonClientRegionSupportEnabled = True
         core.PermissionRequested += on_permission
 
     def on_initialized(sender, args):

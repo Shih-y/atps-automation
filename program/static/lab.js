@@ -20,6 +20,12 @@
     refreshing: false,
     pages: [],
     modules: [],
+    serviceHealth: { hardware: null, lab: null },
+    setServiceHealth(source, available) {
+      if (this.serviceHealth[source] === available) return;
+      this.serviceHealth[source] = available;
+      this.render();
+    },
     node(tag, text, parent, attrs = {}) {
       const n = document.createElement(tag);
       if (text != null) n.textContent = text;
@@ -250,12 +256,20 @@
         .map((id) => document.getElementById(id)?.textContent || '')
         .join(' | ');
       this.status.textContent = `${hardware} | 当前样品：${current ? this.sampleName(current) : '无'} | 批次：${this.state.active_project_id ? (this.state.projects || []).find((p) => p.id === this.state.active_project_id)?.name || this.state.active_project_id : '未启动'} | ${stop || (this.state.running ? '调度运行' : '调度暂停')} | 硬件急停：实体按钮`;
+      const unavailable = Object.values(this.serviceHealth).some((available) => available === false);
+      this.status.parentElement.dataset.serviceUnavailable = String(unavailable);
+      if (unavailable)
+        this.status.textContent = '服务不可用；设备状态与停止结果无法刷新，请核对设备读回与实体急停。';
+      this.status.title = this.status.textContent;
     },
     async refresh() {
       if (this.refreshing) return;
       this.refreshing = true;
+      let stateLoaded = false;
       try {
         this.state = await this.api('state');
+        stateLoaded = true;
+        this.serviceHealth.lab = true;
         if (!this.projectId && this.state.projects?.length)
           this.chooseProject(this.state.projects.at(-1).id);
         this.render();
@@ -283,6 +297,7 @@
             }
         }
       } catch (e) {
+        if (!stateLoaded) this.setServiceHealth('lab', false);
         this.tell(e.message, true);
       } finally {
         this.refreshing = false;
@@ -319,7 +334,9 @@
   ctx.projectSelect.onchange = () => ctx.chooseProject(ctx.projectSelect.value);
   ctx.projectText = ctx.node('p', '', projectBar);
   const statusBar = ctx.node('div', null, document.body, { id: 'lab-status' });
-  ctx.status = ctx.node('span', '', statusBar);
+  ctx.status = ctx.node('span', '', statusBar, { id: 'lab-status-text' });
+  ctx.status.setAttribute('role', 'status');
+  ctx.status.setAttribute('aria-live', 'polite');
   // All software stop controls use the same priority handler installed by console.js.
   const stopButton = ctx.node('button', '立即停止 · 保留连接', statusBar, {
     type: 'button',

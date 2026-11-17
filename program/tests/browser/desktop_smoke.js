@@ -43,7 +43,18 @@ async function closeNativeWindow(page){
 (async()=>{
   let {context,page,port}=await launch();
   await page.waitForSelector('#windowControls:not([hidden])');
+  console.log(execFileSync(process.env.PYTHON||'python',[path.join(__dirname,'desktop_resize.py'),data,'--physical'],{windowsHide:true,stdio:'pipe'}).toString().trim());
   console.log(execFileSync(process.env.PYTHON||'python',[path.join(__dirname,'desktop_resize.py'),data],{windowsHide:true,stdio:'pipe'}).toString().trim());
+  // Crossing monitors during native drag may change DPI. Wait for the restored
+  // viewport to settle instead of assuming its old CSS pixel size survives.
+  await page.evaluate(()=>new Promise(resolve=>{
+    let previous='',stable=0;
+    const timer=setInterval(()=>{
+      const size=innerWidth+','+innerHeight;
+      stable=size===previous?stable+1:0;previous=size;
+      if(stable>=3){clearInterval(timer);resolve();}
+    },100);
+  }));
   assert.equal(await page.locator('header #runStatus, header #stopBtn').count(),0);
   const headerBounds=await page.locator('header').boundingBox();
   const workspaceBounds=await page.locator('#workspace').boundingBox();
@@ -64,7 +75,8 @@ async function closeNativeWindow(page){
   await page.locator('#windowControls').screenshot({path:path.join(output,'window-controls-close-hover.png')});
   execFileSync(process.env.PYTHON||'python',[path.join(__dirname,'desktop_resize.py'),data,'--capture'],{windowsHide:true,stdio:'pipe'});
   await page.mouse.move(300,200);
-  assert.equal(await page.locator('.pywebview-drag-region').count(),1);
+  assert.equal(await page.locator('.pywebview-drag-region').count(),0,'programmatic pywebview dragging is disabled');
+  assert.equal(await page.locator('.window-drag-area').evaluate(e=>getComputedStyle(e).getPropertyValue('app-region')),'drag');
   assert.equal(await page.evaluate(()=>getComputedStyle(document.documentElement).scrollbarWidth),'thin');
   assert.equal(await page.locator('.table-scroll').first().evaluate(e=>getComputedStyle(e).scrollbarWidth),'thin');
   await page.getByRole('button',{name:'最大化',exact:true}).click();
@@ -78,10 +90,6 @@ async function closeNativeWindow(page){
   await page.getByRole('button',{name:'最小化',exact:true}).click();
   await page.evaluate(()=>pywebview.api.toggle_maximize());
   await page.evaluate(()=>pywebview.api.toggle_maximize());
-  await page.locator('.window-drag-area').dblclick();
-  await page.waitForFunction(()=>document.querySelector('#windowMaximize').title==='还原');
-  await page.locator('.window-drag-area').dblclick();
-  await page.waitForFunction(()=>document.querySelector('#windowMaximize').title==='最大化');
   const state=await page.evaluate(async()=>await(await fetch('/api/state')).json());assert.equal(state.connected,false);
   for(const title of ['设备与校准','实验设计','运行监控','图像判相与复核','相图与主动学习','数据与报告']){
     await page.getByRole('button',{name:title,exact:true}).click();

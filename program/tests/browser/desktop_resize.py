@@ -19,6 +19,8 @@ user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
 user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
 user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
 user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+user32.WindowFromPoint.argtypes = [wintypes.POINT]
+user32.WindowFromPoint.restype = wintypes.HWND
 user32.ClientToScreen.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
 user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int,
                                ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT]
@@ -27,6 +29,58 @@ user32.SendMessageW.restype = ctypes.c_ssize_t
 user32.GetDpiForWindow.argtypes = [wintypes.HWND]
 user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
 user32.SystemParametersInfoW.argtypes = [wintypes.UINT, wintypes.UINT, ctypes.c_void_p, wintypes.UINT]
+user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+user32.GetAncestor.restype = wintypes.HWND
+user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+user32.IsZoomed.argtypes = [wintypes.HWND]
+user32.IsZoomed.restype = wintypes.BOOL
+user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+
+
+class MouseInput(ctypes.Structure):
+    _fields_ = [('dx', wintypes.LONG), ('dy', wintypes.LONG), ('mouseData', wintypes.DWORD),
+                ('dwFlags', wintypes.DWORD), ('time', wintypes.DWORD), ('extraInfo', ctypes.c_size_t)]
+
+
+class InputUnion(ctypes.Union):
+    _fields_ = [('mouse', MouseInput)]
+
+
+class Input(ctypes.Structure):
+    _fields_ = [('type', wintypes.DWORD), ('data', InputUnion)]
+
+
+user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(Input), ctypes.c_int]
+user32.SendInput.restype = wintypes.UINT
+
+
+def mouse_input(x, y, flags):
+    left, top = user32.GetSystemMetrics(76), user32.GetSystemMetrics(77)
+    width, height = user32.GetSystemMetrics(78), user32.GetSystemMetrics(79)
+    item = Input()
+    item.data.mouse = MouseInput(round((x-left)*65535/(width-1)), round((y-top)*65535/(height-1)),
+                                 0, flags | 0xE001, 0, 0)
+    assert user32.SendInput(1, ctypes.byref(item), ctypes.sizeof(Input)) == 1, ctypes.get_last_error()
+
+
+def drag(x, y, dx, dy):
+    assert user32.GetAncestor(user32.WindowFromPoint(wintypes.POINT(x, y)), 2) == hwnd, 'test window obscured'
+    mouse_input(x, y, 0x0002)
+    time.sleep(.08)
+    for step in range(1, 9):
+        mouse_input(x+round(dx*step/8), y+round(dy*step/8), 0)
+        time.sleep(.01)
+    mouse_input(x+dx, y+dy, 0x0004)
+    time.sleep(.15)
+
+
+def double_click(x, y):
+    for _ in range(2):
+        mouse_input(x,y,0x0002)
+        mouse_input(x,y,0x0004)
+        time.sleep(.06)
+    time.sleep(.15)
 handles = []
 
 
@@ -89,6 +143,49 @@ scale = user32.GetDpiForWindow(hwnd) / 96
 work_area = wintypes.RECT()
 assert user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(work_area), 0)
 width, height = round(1100*scale)+80, round(700*scale)+80
+if '--physical' in sys.argv:
+    cursor = wintypes.POINT()
+    user32.GetCursorPos(ctypes.byref(cursor))
+    was_topmost = bool(user32.GetWindowLongPtrW(hwnd, -20) & 8)
+    try:
+        assert user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0013)
+        user32.SetForegroundWindow(hwnd)
+        for name, horizontal, vertical in [('top',0,-1),('top-left',-1,-1),('top-right',1,-1)]:
+            left = work_area.right-width-80 if horizontal>0 else work_area.left+80
+            place((left,work_area.top+80,left+width,work_area.top+80+height))
+            before = rectangle()
+            origin = wintypes.POINT(0,0)
+            user32.ClientToScreen(hwnd,ctypes.byref(origin))
+            # Start inside the WebView client, including both corner grips;
+            # native side borders would otherwise hide a broken child route.
+            x = origin.x+2 if horizontal<0 else before[2]-(origin.x-before[0])-3 if horizontal>0 else (before[0]+before[2])//2
+            drag(x,before[1]+2,horizontal*40,-40)
+            after = rectangle()
+            assert after[3]-after[1]>before[3]-before[1]+20,(name,'physical top resize failed',before,after)
+            if horizontal:
+                assert after[2]-after[0]>before[2]-before[0]+20,(name,'physical corner resize failed',before,after)
+        place((work_area.left+80,work_area.top+80,work_area.left+80+width,work_area.top+80+height))
+        user32.ShowWindow(hwnd,3)
+        time.sleep(.15)
+        assert user32.IsZoomed(hwnd)
+        before = rectangle()
+        drag(before[0]+round(300*scale),work_area.top+round(28*scale),60,100)
+        after = rectangle()
+        assert not user32.IsZoomed(hwnd),('maximized caption drag did not restore',before,after)
+        assert after[2]-after[0] < before[2]-before[0],('caption drag did not restore normal width',before,after)
+        assert after[0]>=work_area.left and after[1]>=work_area.top and after[2]<=work_area.right and after[3]<=work_area.bottom,('caption drag moved controls off screen',after)
+        double_click(after[0]+round(300*scale),after[1]+round(28*scale))
+        assert user32.IsZoomed(hwnd),'native caption double click must maximize'
+        double_click(work_area.left+round(300*scale),work_area.top+round(28*scale))
+        assert not user32.IsZoomed(hwnd),'native caption double click must restore'
+        print('PASS real SendInput top/corner resize, native caption double click, and restore-on-drag with visible window controls')
+    finally:
+        user32.ShowWindow(hwnd,9)
+        place(original)
+        if not was_topmost:
+            user32.SetWindowPos(hwnd,-2,0,0,0,0,0x0013)
+        mouse_input(cursor.x,cursor.y,0x0004)
+    raise SystemExit()
 try:
     for name, hit, horizontal, vertical in [
         ('left', 10, -1, 0), ('right', 11, 1, 0),

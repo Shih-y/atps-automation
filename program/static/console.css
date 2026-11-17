@@ -13,6 +13,8 @@ html.desktop-shell{height:100%;overflow:hidden}
 .desktop-shell #lab-status{position:relative;flex-shrink:0}
 .desktop-shell .lab-page{padding-bottom:24px}
 .desktop-shell .window-drag-area{flex:1;align-self:stretch;display:flex;flex-direction:column;justify-content:center;user-select:none;cursor:default}
+.desktop-shell .window-drag-area{-webkit-app-region:drag;app-region:drag}
+.window-controls{-webkit-app-region:no-drag;app-region:no-drag}
 .window-controls{position:absolute;top:0;right:0;display:flex;gap:0;height:32px;user-select:none}
 .window-controls button{appearance:none;display:grid;place-items:center;flex:0 0 46px;width:46px;height:32px;min-height:0;margin:0;padding:0;border:0;border-radius:0;box-shadow:none;background:transparent;color:#202124;cursor:default}
 .window-controls svg{display:block;width:10px;height:10px;fill:none;stroke:currentColor;stroke-width:1;pointer-events:none}
