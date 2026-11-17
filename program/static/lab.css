@@ -8,6 +8,8 @@
 .lab-page{width:100%;min-width:0;padding:16px 24px 80px}.lab-page[hidden]{display:none!important}
 .lab-page .card{margin:0 0 18px}.lab-page h2{font-size:20px;margin:0 0 12px}
 .lab-page button{margin:5px 8px 5px 0}.lab-page .lab-form{display:flex;flex-wrap:wrap;gap:14px;align-items:end;margin:14px 0;padding:15px;background:#fafafa;border:1px solid #d4d4d4}
+.lab-page :is(.controls,.lab-form)>button{margin:0;min-height:40px;padding:8px 13px}
+.lab-page :is(.controls,.lab-form)>label>:is(input,select):not([type=checkbox]){height:40px}
 .lab-form label{display:flex;flex-direction:column;gap:5px;flex:1 1 180px;max-width:300px;font-size:14px;min-width:130px}
 .lab-form input,.lab-form select{width:100%;min-width:0;padding:8px;border:1px solid #aaa;background:#fff;border-radius:4px}
 .lab-form input[type=checkbox]{width:auto;align-self:flex-start;min-height:20px}
