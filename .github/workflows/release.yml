@@ -46,8 +46,8 @@ jobs:
           }
       - name: Build one-file desktop executable
         run: python build_windows.py
-      - name: Packaged desktop smoke test (basic)
-        run: node tests/browser/desktop_smoke.js
+      - name: Build desktop directory for the Windows ZIP
+        run: python build_windows.py --onedir
       - name: Stage release files
         shell: pwsh
         env:
@@ -58,10 +58,21 @@ jobs:
           Copy-Item 'dist/ATPS-Automation.exe' $asset
           Copy-Item 'dist/ATPS-Automation.exe.config' "$asset.config"
           $bundle = "ATPS-Automation-$tag-windows.zip"
-          Compress-Archive -Path 'dist/ATPS-Automation.exe','dist/ATPS-Automation.exe.config','build_info.json','../docs/五瓶自动实验操作说明.txt','../docs/2026-11-14_修复与验收说明.txt','../docs/同瓶补加与自动研究操作说明.txt','../docs/母液浓度与密度核查.txt','../docs/2026-11-15_自动配方与观察闭环说明.txt','../docs/2026-11-15_分来源体积标定与修复说明.txt' -DestinationPath $bundle
+          Compress-Archive -Path 'dist/ATPS-Automation/*','build_info.json','../docs/五瓶自动实验操作说明.txt','../docs/2026-11-14_修复与验收说明.txt','../docs/同瓶补加与自动研究操作说明.txt','../docs/母液浓度与密度核查.txt','../docs/2026-11-15_自动配方与观察闭环说明.txt','../docs/2026-11-15_分来源体积标定与修复说明.txt' -DestinationPath $bundle
           @($asset,"$asset.config",$bundle,'build_info.json') | ForEach-Object { "$((Get-FileHash $_ -Algorithm SHA256).Hash.ToLowerInvariant())  $_" } | Set-Content -Encoding ascii SHA256SUMS.txt
           "RELEASE_ASSET=$asset" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "RELEASE_BUNDLE=$bundle" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      - name: Packaged desktop smoke tests (basic)
+        shell: pwsh
+        run: |
+          $env:ATPS_EXE = Join-Path $PWD $env:RELEASE_ASSET
+          node tests/browser/desktop_smoke.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $expanded = Join-Path $env:RUNNER_TEMP 'atps-release-check'
+          python -m zipfile -e "$env:RELEASE_BUNDLE" "$expanded"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:ATPS_EXE = Join-Path $expanded 'ATPS-Automation.exe'
+          node tests/browser/desktop_smoke.js
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

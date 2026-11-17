@@ -99,15 +99,17 @@ node --test tests/phase_analysis.test.js
 浏览器检查见 [测试说明](program/tests/browser/说明.txt)。测试只能使用专用假服务，不能指向实物的8765服务。软件测试不证明实机配液或判相精度。
 测试使用隔离目录和假硬件，不打开真实串口。GitHub Actions 在 Windows / Python 3.12 上执行相同测试。
 
-### 构建桌面单文件版
+### 构建 Windows 桌面版
 
 ```powershell
 cd program
 python -m pip install -r requirements.txt -r requirements-desktop.txt
-python build_windows.py
+python build_windows.py --onedir
 ```
 
-输出 `program/dist/ATPS-Automation.exe`（含网页、默认配置和 pyserial）与同名 `.exe.config`，并打印 SHA256。推荐下载 Windows ZIP 并完整解压，保留两个文件相邻；配置仅供本程序的 .NET 依赖加载，不修改系统策略。`build_info.json`记录源码提交号。推送 tag 会触发 `.github/workflows/release.yml`：先运行后端、判相和浏览器回归，再构建并验收实际EXE，上传程序包、构建信息与 `SHA256SUMS.txt`。
+目录版输出到 `program/dist/ATPS-Automation/`。推荐下载 Windows ZIP 并完整解压，双击其中的 `ATPS-Automation.exe`，保留同目录下的 `_internal` 和 `.exe.config`。目录版省去每次启动时的临时解包。单文件版仍可通过 `python build_windows.py` 构建，输出到 `program/dist/`，使用时须把同名 `.exe.config` 放在旁边。
+
+桌面日志 `%LOCALAPPDATA%\ATPS-Automation\data\desktop.log` 记录本地服务、窗口、WebView2 和页面加载的启动时间点。`build_info.json` 记录源码提交号。推送 tag 会触发 `.github/workflows/release.yml`，运行后端、判相及浏览器回归，并验收单文件版和从发布 ZIP 解压出的目录版。
 
 本次修复增加数据库异常下优先停止、按项目冻结批次、统一采用组成、延迟人工复核、严格限定项目导出及结构化训练资格。旧数据库升级前自动备份；旧标定保留为试用，不追认实验精度。六页前端已拆为独立模块，所有保存操作支持幂等重试。
 
@@ -115,7 +117,7 @@ python build_windows.py
 
 ```text
 program/                   程序、网页、默认配置和测试
-  desktop.py               单文件桌面入口（本机服务 + pywebview）
+  desktop.py               桌面入口（本机服务 + pywebview）
   build_windows.py         PyInstaller 构建脚本
   requirements-desktop.txt pywebview / PyInstaller 版本
   static/                  前端界面

@@ -131,7 +131,7 @@ async function closeNativeWindow(page){
 })().catch(e=>{console.error(e,childOutput);process.exitCode=1;}).finally(async()=>{
   if(browser)await browser.close().catch(()=>{});
   if(child&&child.exitCode===null){
-    // PyInstaller onefile has a parent and an extracted child. Own PID only.
+    // Terminate only the spawned test instance and its child processes.
     try{execFileSync('taskkill',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});}catch{child.kill();}
   }
 });

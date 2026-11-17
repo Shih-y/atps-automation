@@ -27,8 +27,9 @@ experiment_live_frame.js：启动专用8879假硬件服务，以canvas.captureSt
 2026-11-14 完整性修复：experiment_console.js增加项目范围、采用组成、迟复核、
 逐任务拍照失败、请求响应丢失后幂等重试、候选估计坐标及当前项目空选导出回归。
 desktop_smoke.js直接启动构建后的EXE，以隔离数据目录验收六页、合成相机、导出和关闭。
-ATPS_EXE可指定待验收EXE；ATPS_TEST_TEMP_ROOT可指定测试专用的可写临时目录。
-测试会关闭自己创建的EXE进程树，不会关闭其他程序。新发布流水线包含此验收。
+ATPS_EXE可指定待验收EXE；目录版请指向含有同级 _internal 和 .exe.config 的EXE。
+ATPS_TEST_TEMP_ROOT可指定测试专用的可写临时目录。
+测试只关闭自己创建的EXE进程树。发布流水线验收单文件版和从 Windows ZIP 解压出的目录版。
 默认只运行基础EXE验收，不执行依赖屏幕和焦点的原生缩放、拖动或标题栏双击。
 需要真实桌面交互检查时，运行 node tests/browser/desktop_smoke.js --native-interactions，
 或在Actions中手动运行 Windows desktop interactions (manual)，选择待验收的分支。

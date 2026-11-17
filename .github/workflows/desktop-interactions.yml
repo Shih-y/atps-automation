@@ -28,10 +28,12 @@ jobs:
         run: python -m pip install -r requirements.txt -r requirements-desktop.txt
       - name: Install browser test dependency
         run: npm install --no-save playwright@1.62.1
-      - name: Build one-file desktop executable
-        run: python build_windows.py
+      - name: Build desktop directory
+        run: python build_windows.py --onedir
       - name: Prepare display for native desktop test
         shell: powershell
         run: Set-DisplayResolution -Width 1920 -Height 1080 -Force
       - name: Packaged desktop smoke test with native interactions
-        run: node tests/browser/desktop_smoke.js --native-interactions
+        run: |
+          $env:ATPS_EXE = Join-Path $PWD 'dist/ATPS-Automation/ATPS-Automation.exe'
+          node tests/browser/desktop_smoke.js --native-interactions

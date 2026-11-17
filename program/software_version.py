@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from functools import lru_cache
 
-VERSION='2026.11.17.4'
+VERSION='2026.11.18'
 
 @lru_cache(maxsize=1)
 def version_info():

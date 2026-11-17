@@ -1,13 +1,14 @@
-"""Build the one-file Windows desktop executable.
+"""Build the Windows desktop application.
 
 Run from anywhere with the interpreter that has requirements.txt and
 requirements-desktop.txt installed:
 
-    python build_windows.py
+    python build_windows.py           # dist/ATPS-Automation.exe
+    python build_windows.py --onedir  # dist/ATPS-Automation/
 
-Output: dist/ATPS-Automation.exe and its application-local .exe.config.
-Distribute both files together; the configuration does not change Windows policy.
+Keep the .exe.config beside its executable and retain _internal in directory builds.
 """
+import argparse
 import hashlib
 import json
 import os
@@ -30,6 +31,10 @@ def copy_runtime_config(executable):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument('--onedir', action='store_true',
+                        help='build a launch-ready directory without per-run extraction')
+    args = parser.parse_args()
     if sys.platform != 'win32':
         raise SystemExit('This build targets Windows only.')
     if sys.maxsize <= 2 ** 32:
@@ -44,33 +49,35 @@ def main():
     from software_version import version_info
     info=version_info()
     (HERE/'build_info.json').write_text(json.dumps(info,ensure_ascii=False,indent=2),encoding='utf-8')
-    if (HERE / 'build').exists():
-        if (HERE/'build').resolve().parent!=HERE:raise SystemExit('Build path escapes workspace')
-        shutil.rmtree(HERE / 'build')
-    if (HERE / 'dist').exists():
-        if (HERE/'dist').resolve().parent!=HERE:raise SystemExit('Dist path escapes workspace')
-        shutil.rmtree(HERE / 'dist')
+    dist = HERE / 'dist'
+    work = HERE / 'build'
+    app_dir = dist / NAME if args.onedir else dist
+    # PyInstaller replaces the selected bundle and cleans its work directory.
+    # Check the resolved paths before handing them to its cleanup routines.
+    for path in (dist, work, work / NAME, app_dir):
+        if path.resolve() != path:
+            raise SystemExit(f'Build output path is redirected: {path}')
 
-    args = [
-        '--noconfirm', '--clean', '--onefile', '--windowed',
+    build_args = [
+        '--noconfirm', '--clean', '--onedir' if args.onedir else '--onefile', '--windowed',
         '--name', NAME,
-        '--distpath', str(HERE / 'dist'),
-        '--workpath', str(HERE / 'build'),
-        '--specpath', str(HERE / 'build'),
+        '--distpath', str(dist),
+        '--workpath', str(work),
+        '--specpath', str(work),
         '--paths', str(HERE),
         '--collect-submodules', 'serial',
     ]
     for module in HIDDEN:
-        args += ['--hidden-import', module]
+        build_args += ['--hidden-import', module]
     for item in DATAS:
         source = HERE / item
         target = '.' if item.endswith('.json') else item
-        args += ['--add-data', f'{source}{os.pathsep}{target}']
+        build_args += ['--add-data', f'{source}{os.pathsep}{target}']
 
     from PyInstaller.__main__ import run
-    run(args + [str(HERE / 'desktop.py')])
+    run(build_args + [str(HERE / 'desktop.py')])
 
-    exe = HERE / 'dist' / f'{NAME}.exe'
+    exe = app_dir / f'{NAME}.exe'
     if not exe.is_file() or exe.stat().st_size < 1_000_000:
         raise SystemExit(f'build produced no usable executable: {exe}')
     runtime_config = copy_runtime_config(exe)
@@ -78,6 +85,8 @@ def main():
     print(f'\nBuilt {exe} ({exe.stat().st_size / 1048576:.1f} MiB)')
     print(f'SHA256 {digest}')
     print(f'Keep alongside executable: {runtime_config.name}')
+    if args.onedir:
+        print('Distribute the complete application directory, including _internal.')
     print(f'Config SHA256 {hashlib.sha256(runtime_config.read_bytes()).hexdigest()}')
 
 

@@ -290,6 +290,7 @@ def allow_camera(window, origin):
     def attach(core):
         core.Settings.IsNonClientRegionSupportEnabled = True
         core.PermissionRequested += on_permission
+        logging.info('WebView2 initialized')
 
     def on_initialized(sender, args):
         if args.IsSuccess:
@@ -352,8 +353,10 @@ def main():
                                        min_size=(1100, 700), resizable=True, frameless=True,
                                        easy_drag=False, js_api=controls)
         controls._bind(window)
+        window.events.before_show += lambda: logging.info('native desktop window created')
         window.events.before_show += enable_window_resize
         window.events.before_show += functools.partial(allow_camera, origin=url)
+        window.events.loaded += lambda: logging.info('desktop page loaded')
         webview.start(gui='edgechromium', debug=args.debug_port is not None)
     except Exception as exc:
         logging.exception('desktop window failed')
