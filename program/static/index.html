@@ -4,7 +4,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>泵阀实验控制台</title>
 <link rel="stylesheet" href="/console.css"><link rel="stylesheet" href="/lab.css"><script defer src="/lab-source-volume.js"></script><script defer src="/lab-equipment.js"></script><script defer src="/lab-design.js"></script><script defer src="/lab-monitor.js"></script><script defer src="/lab-review.js"></script><script defer src="/lab-model.js"></script><script defer src="/lab-data.js"></script><script defer src="/lab.js"></script>
-<script defer src="/phase_analysis.js"></script><script defer src="/console.js"></script>
+<script defer src="/phase_analysis.js"></script><script defer src="/manual-batch.js"></script><script defer src="/console.js"></script>
 </head>
 <body>
 <header><div class="window-drag-area"><span class="eyebrow">ATPS · 实验操作</span><h1>泵阀控制台</h1></div><div id="windowControls" class="window-controls" role="group" aria-label="窗口操作" hidden>
@@ -19,6 +19,11 @@
 <p id="serialStatus" class="muted">泵和阀共用同一条 RS485 串口。连接不启动动作。</p>
 <div class="telemetry"><div><small>泵读回</small><strong id="pumpStatus">状态未知</strong></div><div><small>阀读回</small><strong id="valveStatus">阀位未知</strong></div><div><small>流向</small><strong id="flowStatus">等待有效读回</strong></div></div><p id="telemetryDetail" class="muted">界面不推断已停止、已充满或实际交付量。</p>
 <p id="serverMessage" class="muted" aria-live="polite"></p></section>
+<section class="card manual-batch" id="manualBatchCard"><div class="section-head"><h2>多瓶毫升配方</h2><span class="badge">按瓶顺序 · 一次启动</span></div>
+<p class="muted">每行选择瓶号并填写来源体积（mL）；全为 0 的行跳过。每瓶最多加入 10 mL，请扣除已有液体。每个来源一次吸取、一次追送；每瓶末尾混合一次，再用 15 口清水 1.5 mL 朝废液方向清洗，公共管仍有残水，实际交付量待测。</p>
+<div class="table-scroll"><table class="manual-batch-table"><caption>各瓶本次加入体积 / mL</caption><thead><tr><th>目标瓶 / 物理阀口</th><th>10 · 柠檬酸三钠</th><th>11 · 硫酸铵</th><th>12 · 硫酸钠</th><th>13 · 磷酸氢二钾</th><th>14 · PEG4000</th><th>15 · 清水</th></tr></thead><tbody id="manualBatchRows"></tbody></table></div>
+<p class="muted">沿用下方「单瓶配方」中的瓶末混合参数；可直接开始，预览不启动泵。</p><div class="controls"><button id="manualBatchPreview" type="button">预览多瓶配方（不动作）</button><button id="manualBatchStart" type="button" class="primary">开始多瓶配方</button></div>
+<p id="manualBatchPlan" class="result" aria-live="polite">尚未预览；填写瓶号与 mL 后可直接开始。</p><p id="manualBatchProgress" class="result" aria-live="polite">尚未运行多瓶配方。</p></section>
 <div class="work-grid">
 <section class="card recipe"><div class="section-head"><h2>单瓶配方</h2><span class="badge">一次启动 · 完整流程</span></div>
 <label class="target">目标样品瓶<select id="recipeSample" data-samples></select></label>

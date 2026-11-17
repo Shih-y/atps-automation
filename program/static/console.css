@@ -25,3 +25,5 @@ html.desktop-shell{height:100%;overflow:hidden}
 .window-controls button:focus-visible{outline:1px solid currentColor;outline-offset:-3px}
 .window-controls #windowClose:hover{background:#e81123;color:#fff}
 .window-controls #windowClose:active{background:#c50f1f;color:#fff}
+
+.manual-batch .table-scroll{max-width:100%}.manual-batch-table{min-width:950px;table-layout:fixed}.manual-batch-table th:first-child{width:190px}.manual-batch-table input{padding:7px;min-height:36px}.manual-batch-table caption{text-align:left;padding:0 0 8px;color:#60676e;font-size:12px}

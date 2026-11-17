@@ -52,7 +52,7 @@
     if(body !== undefined && !token) { const r=await api('/api/token');token=r.token;if(!token)throw Error('未获取控制令牌，请刷新页面'); }
     const response=await fetch(path,body === undefined?{cache:'no-store'}:{method:'POST',headers:{'Content-Type':'application/json','X-Control-Token':token},body:JSON.stringify(body)});
     let data;try { data=await response.json(); } catch { throw Error('服务返回格式异常'); }
-    if(!response.ok || data.ok === false || data.error)throw Error(data.error || `服务请求失败 (${response.status})`);
+    if(!response.ok || data.ok === false || data.error){const error=Error(data.error || `服务请求失败 (${response.status})`);error.status=response.status;throw error;}
     return data;
   }
   async function operate(work, message='请求已接受，请查看设备读回与运行记录。', checkHardware=true) {
@@ -65,6 +65,7 @@
   const action = (name,payload={}) => api('/api/action',{action:name,...payload});
   function bind(id, work, message, serial=true) { $(id).addEventListener('click',()=>operate(work,message,serial)); }
   function local(id, work) { $(id).addEventListener('click',async()=>{try{await work();}catch(e){notice(e.message,true);}}); }
+  const manualBatch=window.ATPSManualBatch?.({api,action,bind,notice,getState:()=>state});
   for(const select of document.querySelectorAll('[data-samples], [data-five-samples]')) {
     for(const n of select.hasAttribute('data-five-samples')?samples.slice(0,5):samples)select.append(node('option',`${n}号瓶`,{value:n}));
   }
@@ -188,6 +189,7 @@
   }
   function render() {
     renderBottleRouting();
+    manualBatch?.render(state);
     $('connectionStatus').textContent=state.connected?`${state.config?.communication?.port || '串口未知'} · 泵阀共用 RS485`:'未连接';
     $('serverMessage').textContent=state.message || '';
     if(state.connected)$('serialStatus').textContent=`实际连接 ${state.config?.communication?.port || '未知串口'}；连接与泵运动状态分别显示。`;

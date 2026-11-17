@@ -213,6 +213,9 @@ class FreeDebugMixin:
     def _free_action(self,payload):
         from controller import number,pulse_checked
         action=payload['action']
+        if action=='batch_recipe':
+            self._manual_batch_action(payload)
+            return True
         supported={'manual_motion','read_status','volume','recipe','stock_calibration','aspirate','chase','dose','bubble','run','prime','wash','purge','reset','discard_loaded','new_samples','confirm_reset','clear','magnetic_stop','prepare_capture','capture'}
         if action not in supported:return False
         # Validate the complete recipe before the first physical action.
