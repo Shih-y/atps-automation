@@ -26,6 +26,10 @@ jobs:
           cache-dependency-path: |
             program/requirements.txt
             program/requirements-desktop.txt
+      - name: Extract release notes from changelog
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: python ../.github/scripts/release_notes.py --changelog ../CHANGELOG.md --tag "$env:TAG_NAME" --output "$env:RUNNER_TEMP/RELEASE_NOTES.md"
       - name: Install dependencies
         run: python -m pip install -r requirements.txt -r requirements-desktop.txt
       - name: Run isolated software tests
@@ -56,11 +60,10 @@ jobs:
           $bundle = "ATPS-Automation-$tag-windows.zip"
           Compress-Archive -Path 'dist/ATPS-Automation.exe','dist/ATPS-Automation.exe.config','build_info.json','../docs/五瓶自动实验操作说明.txt','../docs/2026-11-14_修复与验收说明.txt','../docs/同瓶补加与自动研究操作说明.txt','../docs/母液浓度与密度核查.txt','../docs/2026-11-15_自动配方与观察闭环说明.txt','../docs/2026-11-15_分来源体积标定与修复说明.txt' -DestinationPath $bundle
           @($asset,"$asset.config",$bundle,'build_info.json') | ForEach-Object { "$((Get-FileHash $_ -Algorithm SHA256).Hash.ToLowerInvariant())  $_" } | Set-Content -Encoding ascii SHA256SUMS.txt
-          "Source commit: $env:GITHUB_SHA`nWindows tests, optical regression, browser and desktop smoke checks completed.`nHardware dosing and phase accuracy require experimental validation." | Set-Content -Encoding utf8 RELEASE_NOTES.txt
           "RELEASE_ASSET=$asset" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "RELEASE_BUNDLE=$bundle" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ github.ref_name }}
-        run: gh release create "$env:TAG_NAME" "$env:RELEASE_ASSET" "$env:RELEASE_ASSET.config" "$env:RELEASE_BUNDLE" SHA256SUMS.txt build_info.json --title "$env:TAG_NAME" --notes-file RELEASE_NOTES.txt
+        run: gh release create "$env:TAG_NAME" "$env:RELEASE_ASSET" "$env:RELEASE_ASSET.config" "$env:RELEASE_BUNDLE" SHA256SUMS.txt build_info.json --title "$env:TAG_NAME" --notes-file "$env:RUNNER_TEMP/RELEASE_NOTES.md"
