@@ -77,7 +77,7 @@ const last = endpoint => requests.filter(r=>r.url===endpoint).at(-1)?.body;
  holdAction={};await page.locator('#washBtn').click();await until(()=>holdAction.res);
  const busyBefore=requests.filter(r=>r.url==='/api/action').length;await page.locator('#purgeBtn').click();await page.waitForTimeout(100);
  check('concurrent action visibly rejected and never queued',requests.filter(r=>r.url==='/api/action').length===busyBefore&&(await page.locator('#notice').innerText()).includes('忙'));
- await page.locator('#stopBtn').click();await until(()=>last('/api/stop'));
+ await page.locator('#lab-stop').click();await until(()=>last('/api/stop'));
  check('stop bypasses an outstanding normal action',!!last('/api/stop'));
  reply(holdAction.res,{ok:true,state});holdAction=null;await page.waitForTimeout(150);
  state.hardware_status={pump_status:'stop_requested',pump_at:Date.now()/1000,valve_status:'unknown'};await page.waitForTimeout(900);

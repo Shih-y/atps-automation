@@ -7,8 +7,12 @@
 <script defer src="/phase_analysis.js"></script><script defer src="/console.js"></script>
 </head>
 <body>
-<header><div><span class="eyebrow">ATPS · 实验操作</span><h1>泵阀控制台</h1></div><div class="header-controls"><span id="runStatus">等待服务</span><button id="stopBtn" class="stop">立即停止 · 保留连接</button></div></header>
-<main>
+<header><div class="window-drag-area"><span class="eyebrow">ATPS · 实验操作</span><h1>泵阀控制台</h1></div><div id="windowControls" class="window-controls" role="group" aria-label="窗口操作" hidden>
+<button id="windowMinimize" type="button" aria-label="最小化" title="最小化"><svg viewBox="0 0 10 10" aria-hidden="true" focusable="false"><path d="M0 5.5h10"/></svg></button>
+<button id="windowMaximize" type="button" aria-label="最大化" title="最大化"><svg class="maximize-icon" viewBox="0 0 10 10" aria-hidden="true" focusable="false"><path d="M.5.5h9v9h-9z"/></svg><svg class="restore-icon" viewBox="0 0 10 10" aria-hidden="true" focusable="false"><path d="M2.5 2.5v-2h7v7h-2M.5 2.5h7v7h-7z"/></svg></button>
+<button id="windowClose" type="button" aria-label="关闭窗口" title="关闭窗口"><svg viewBox="0 0 10 10" aria-hidden="true" focusable="false"><path d="m.5.5 9 9m0-9-9 9"/></svg></button>
+</div></header>
+<div id="workspace"><main>
 <div id="notice" role="status" aria-live="polite">选择参数后直接操作；动作忙时会提示，不会排队。</div>
 <section class="card connection"><div class="section-head"><h2>设备连接</h2><span id="connectionStatus" class="badge">未连接</span></div>
 <div class="controls"><label class="check"><input type="checkbox" id="autoDetectPort" checked>自动识别 CH340</label><label>共用串口<input id="serialPort" list="serialOptions" placeholder="手动输入或选择 COM 口"><datalist id="serialOptions"></datalist></label><button id="scanPortsBtn">扫描串口</button><button id="connectBtn" class="primary">连接设备</button><button id="disconnectBtn">断开</button></div>
@@ -47,4 +51,4 @@
 </section>
 <details class="card"><summary>运行记录</summary><pre id="logs">尚无日志</pre></details>
 <footer>动作完成与实际体积、管路清洁、相态结论分别记录；需要实测的项目不由软件自动确认。</footer>
-</main></body></html>
+</main></div></body></html>

@@ -213,7 +213,7 @@
       return { estimated: '估计', measured: '实测', unavailable: '无有效依据' }[v] || '未知';
     },
     stop() {
-      document.getElementById('stopBtn').click();
+      return window.ATPSControl.stop();
     },
     chooseProject(id) {
       if (this.projectId === id) return;

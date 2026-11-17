@@ -1,5 +1,41 @@
 'use strict';
 (() => {
+  const controls = document.getElementById('windowControls');
+  const dragArea = document.querySelector('.window-drag-area');
+  const maximize = document.getElementById('windowMaximize');
+  let api;
+  function update(state) {
+    const label = state.maximized ? '还原' : '最大化';
+    maximize.setAttribute('aria-label', label);
+    maximize.title = label;
+    maximize.classList.toggle('is-maximized', state.maximized);
+  }
+  async function action(name) {
+    try {
+      const state = await api[name]();
+      if (state) update(state);
+    } catch (error) {
+      console.error('窗口操作失败', error);
+    }
+  }
+  function ready() {
+    if (api || !window.pywebview?.api?.window_state) return;
+    api = window.pywebview.api;
+    controls.hidden = false;
+    document.documentElement.classList.add('desktop-shell');
+    dragArea.classList.add('pywebview-drag-region');
+    document.getElementById('windowMinimize').addEventListener('click', () => action('minimize'));
+    maximize.addEventListener('click', () => action('toggle_maximize'));
+    document.getElementById('windowClose').addEventListener('click', () => action('close'));
+    dragArea.addEventListener('dblclick', () => action('toggle_maximize'));
+    window.addEventListener('focus', () => action('window_state'));
+    action('window_state');
+  }
+  window.addEventListener('pywebviewready', ready);
+  ready();
+})();
+
+(() => {
   const $ = id => document.getElementById(id);
   const samples = [1,2,3,4,5,6], sources = [10,11,12,13,14,15];
   let state = {}, token = '', requesting = false, polling = false, initialized = false, epoch = 0;
@@ -57,16 +93,17 @@
     return api('/api/connect',automatic?{mode:'real',auto_detect:true}:{mode:'real',auto_detect:false,pump_port:port,valve_port:port});
   },'连接请求已完成；实际串口见设备连接状态。');
   bind('disconnectBtn',()=>api('/api/disconnect',{}),'已请求断开，设备状态以服务读回为准。');
-  $('stopBtn').addEventListener('click',async()=>{
+  async function stop() {
     ++epoch;
-    const announce=status=>{window.dispatchEvent(new CustomEvent('atps:stop-status',{detail:status}));$('runStatus').textContent=({requested:'已请求停止',confirmed:'已确认停止',unconfirmed:'无法确认停止'})[status];};
+    const announce=status=>window.dispatchEvent(new CustomEvent('atps:stop-status',{detail:status}));
     announce('requested');notice('已请求停止；等待设备读回确认。');
     try {
       const result=await api('/api/stop',{});if(result.state)state=result.state;render();
       const status=state.stop_status==='confirmed'?'confirmed':state.stop_status==='requested'?'requested':'unconfirmed';
       announce(status);notice(status==='confirmed'?'已确认停止；设备连接保留。':status==='requested'?'已请求停止，尚未确认。':'无法确认停止；请核对设备读回与实体急停。',status==='unconfirmed');
     } catch(e) {announce('unconfirmed');notice('无法确认停止：'+e.message,true);}
-  });
+  }
+  window.ATPSControl = { stop };
   bind('manualSelect',()=>action('select_port',{port:Number($('manualPort').value)}));
   bind('manualRead',()=>action('read_status'));
   bind('manualRun',()=>action('manual_motion',{port:Number($('manualPort').value),rotation:$('manualRotation').value,rpm:numeric('manualRpm','转速',.1,100),turns:numeric('manualTurns','圈数',1,100,true)}));
@@ -129,7 +166,6 @@
   }
   function render() {
     $('connectionStatus').textContent=state.connected?`${state.config?.communication?.port || '串口未知'} · 泵阀共用 RS485`:'未连接';
-    $('runStatus').textContent=state.state==='STOPPING'?'已请求停止':state.state==='STOPPED'&&state.stop_status==='confirmed'?'已确认停止':state.stop_status==='unconfirmed'&&state.state==='FAULT'?'无法确认停止':state.busy?'执行中':state.state==='FAULT'?'操作异常':state.connected?'已连接 · 待操作':'未连接';
     $('serverMessage').textContent=state.message || '';
     if(state.connected)$('serialStatus').textContent=`实际连接 ${state.config?.communication?.port || '未知串口'}；连接与泵运动状态分别显示。`;
     renderTelemetry();preview();
@@ -146,7 +182,7 @@
   async function poll() {
     if(polling)return;polling=true;
     try { state=await api('/api/state');render(); }
-    catch(e){renderTelemetry(false);$('runStatus').textContent='服务不可用';$('serverMessage').textContent=e.message;}
+    catch(e){renderTelemetry(false);$('serverMessage').textContent='服务不可用：'+e.message;}
     finally{polling=false;}
   }
   async function listCameras() {

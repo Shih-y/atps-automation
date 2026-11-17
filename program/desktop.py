@@ -21,6 +21,127 @@ APP_NAME = 'ATPS-Automation'
 WINDOW_TITLE = '双水相配液与图像记录平台'
 
 
+class WindowControls:
+    """Expose only shell actions; closing still runs main's shutdown cleanup."""
+
+    def __init__(self):
+        self._window = None
+        self._maximized = False
+
+    def _bind(self, window):
+        self._window = window
+        window.events.maximized += self._on_maximized
+        window.events.restored += self._on_restored
+
+    def _on_maximized(self):
+        self._maximized = True
+
+    def _on_restored(self):
+        self._maximized = False
+
+    def window_state(self):
+        return {'maximized': self._maximized}
+
+    def minimize(self):
+        self._window.minimize()
+
+    def toggle_maximize(self):
+        if self._maximized:
+            self._window.restore()
+            self._maximized = False
+        else:
+            self._window.maximize()
+            self._maximized = True
+        return self.window_state()
+
+    def close(self):
+        self._window.destroy()
+
+
+def enable_window_resize(window):
+    """Keep native sizing while extending the page through the top frame.
+
+    pywebview's WinForms frameless mode removes WS_THICKFRAME as well as the
+    caption. Restore only the sizing frame so Windows handles edges, corners,
+    minimum sizes and resize cursors, rather than resizing through JavaScript.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.WinDLL('user32', use_last_error=True)
+    user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+    user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+    user32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+    user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int,
+                                   ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT]
+    user32.SetWindowPos.restype = wintypes.BOOL
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.GetWindowRect.restype = wintypes.BOOL
+    user32.IsZoomed.argtypes = [wintypes.HWND]
+    user32.IsZoomed.restype = wintypes.BOOL
+    user32.GetDpiForWindow.argtypes = [wintypes.HWND]
+    user32.GetDpiForWindow.restype = wintypes.UINT
+    hwnd = window.native.Handle.ToInt64()
+    comctl32 = ctypes.WinDLL('comctl32', use_last_error=True)
+    subclass_type = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT,
+                                      wintypes.WPARAM, wintypes.LPARAM,
+                                      ctypes.c_size_t, ctypes.c_size_t)
+    comctl32.SetWindowSubclass.argtypes = [wintypes.HWND, subclass_type,
+                                         ctypes.c_size_t, ctypes.c_size_t]
+    comctl32.SetWindowSubclass.restype = wintypes.BOOL
+    comctl32.RemoveWindowSubclass.argtypes = [wintypes.HWND, subclass_type, ctypes.c_size_t]
+    comctl32.RemoveWindowSubclass.restype = wintypes.BOOL
+    comctl32.DefSubclassProc.argtypes = [wintypes.HWND, wintypes.UINT,
+                                       wintypes.WPARAM, wintypes.LPARAM]
+    comctl32.DefSubclassProc.restype = ctypes.c_ssize_t
+
+    @subclass_type
+    def frame_proc(handle, message, wparam, lparam, subclass_id, reference):
+        try:
+            if message == 0x0083 and lparam:  # WM_NCCALCSIZE
+                rect = ctypes.cast(lparam, ctypes.POINTER(wintypes.RECT)).contents
+                proposed_top = rect.top
+                result = comctl32.DefSubclassProc(handle, message, wparam, lparam)
+                if not user32.IsZoomed(handle):
+                    # Keep the native side/bottom borders but eliminate the
+                    # blank top strip introduced by WS_THICKFRAME.
+                    rect.top = proposed_top
+                return result
+            if message == 0x0084 and not user32.IsZoomed(handle):  # WM_NCHITTEST
+                rect = wintypes.RECT()
+                user32.GetWindowRect(handle, ctypes.byref(rect))
+                x = ctypes.c_short(lparam & 0xffff).value
+                y = ctypes.c_short((lparam >> 16) & 0xffff).value
+                edge = max(4, round(8 * user32.GetDpiForWindow(handle) / 96))
+                if rect.top <= y < rect.top + edge:
+                    if rect.left <= x < rect.left + edge:
+                        return 13  # HTTOPLEFT
+                    if rect.right - edge <= x < rect.right:
+                        return 14  # HTTOPRIGHT
+                    if rect.left <= x < rect.right:
+                        return 12  # HTTOP
+            if message == 0x0082:  # WM_NCDESTROY
+                comctl32.RemoveWindowSubclass(handle, frame_proc, subclass_id)
+        except Exception:
+            logging.exception('custom window frame message failed')
+        return comctl32.DefSubclassProc(handle, message, wparam, lparam)
+
+    # before_show runs on the owning UI thread. Retain the callback until the
+    # HWND is destroyed so ctypes cannot collect a live native function pointer.
+    window._native_frame_callback = frame_proc
+    if not comctl32.SetWindowSubclass(hwnd, frame_proc, 1, 0):
+        raise ctypes.WinError(ctypes.get_last_error())
+    style = user32.GetWindowLongPtrW(hwnd, -16)  # GWL_STYLE
+    ctypes.set_last_error(0)
+    previous = user32.SetWindowLongPtrW(hwnd, -16, (style | 0x00040000) & ~0x00C00000)
+    if not previous and ctypes.get_last_error():
+        raise ctypes.WinError(ctypes.get_last_error())
+    # Refresh cached non-client geometry without moving, resizing or activating.
+    if not user32.SetWindowPos(hwnd, None, 0, 0, 0, 0, 0x0037):
+        raise ctypes.WinError(ctypes.get_last_error())
+
+
 def default_data_dir():
     base = os.environ.get('LOCALAPPDATA') or os.environ.get('APPDATA')
     if base:
@@ -152,8 +273,12 @@ def main():
     try:
         import webview
         webview.settings['REMOTE_DEBUGGING_PORT'] = args.debug_port
+        controls = WindowControls()
         window = webview.create_window(WINDOW_TITLE, url, width=1440, height=960,
-                                       min_size=(1100, 700))
+                                       min_size=(1100, 700), resizable=True, frameless=True,
+                                       easy_drag=False, js_api=controls)
+        controls._bind(window)
+        window.events.before_show += enable_window_resize
         window.events.before_show += functools.partial(allow_camera, origin=url)
         webview.start(gui='edgechromium', debug=args.debug_port is not None)
     except Exception as exc:

@@ -58,7 +58,7 @@ async function until(fn){for(let i=0;i<100;i++){if(await fn())return;await new P
   await page.locator('#recipeStart').click();await until(async()=>(await state()).recipe_run?.completed);
   s=await state();
   check('real controller sees four liquid segments then auto mixing and one end purge',s.recipe_run.total_plugs===4&&s.recipe_run.completed_commands===10&&s.recipe_run.mixing_performed&&s.recipe_run.purge_performed&&s.selected_port===16);
-  await until(async()=>(await page.locator('#runStatus').innerText()).includes('待操作'));
+  await until(async()=>(await page.locator('#recipeProgress').innerText()).includes('动作完成'));
   await page.locator('#calibrationPanel summary').click();await page.fill('#referenceMl','.16');await page.locator('#referenceSave').click();
   await until(async()=>(await state()).water_dose_reference.mean_per_dose_ml===.16);
   await page.reload();await until(async()=>(await page.locator('#referenceSummary').innerText()).includes('0.16'));
@@ -66,7 +66,7 @@ async function until(fn){for(let i=0;i<100;i++){if(await fn())return;await new P
   await page.fill('#volume15','.32');await page.locator('#recipeStart').click();
   await until(async()=>{const r=(await state()).recipe_run;return r?.completed&&r.requested_ml===.32;});
   check('next recipe uses updated endpoint reference',(await state()).recipe_run.items[0].total_steps===90);
-  await page.locator('#stopBtn').click();await until(async()=>(await state()).state==='STOPPED');
+  await page.locator('#lab-stop').click();await until(async()=>(await state()).state==='STOPPED');
   check('UI stop preserves actual fake shared connection',(await state()).connected===true);
   check('no browser errors or camera calls: '+JSON.stringify(errors),errors.length===0&&await page.evaluate(()=>cameraCalls)===0);
   console.log(JSON.stringify({passed:checks.length,errors}));
