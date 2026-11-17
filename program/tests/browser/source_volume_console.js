@@ -54,7 +54,7 @@ async function until(fn){for(let i=0;i<80;i++){if(await fn())return;await new Pr
  const f=page.locator('#source-volume-form'),fill=(n,v)=>f.locator('[name='+n+']').fill(v);
  await f.locator('[name=source]').selectOption('13');await f.locator('[name=sample]').selectOption('6');await fill('doses','5');
  await page.locator('#source-volume-collect').click();await until(()=>last('/api/action'));
- check('collection explicitly carries source bottle doses and finite pulses',last('/api/action').action==='stock_calibration'&&last('/api/action').source===13&&last('/api/action').sample===6&&last('/api/action').doses===5&&last('/api/action').aspirate.steps===45&&last('/api/action').aspirate.timeout_s>0&&last('/api/action').chase.steps===2000);
+ check('collection defaults match manual recipe chase 30 turns at 60 rpm',last('/api/action').action==='stock_calibration'&&last('/api/action').source===13&&last('/api/action').sample===6&&last('/api/action').doses===5&&last('/api/action').aspirate.steps===45&&last('/api/action').aspirate.timeout_s>0&&last('/api/action').chase.turns===30&&last('/api/action').chase.rpm===60);
  const count=calls.filter(c=>c.url==='/api/action').length;
  await fill('aspirate_steps','46');await fill('groups','1');await f.locator('button[type=submit]').click();await until(async()=>(await page.locator('#lab-message').innerText()).includes('参数'));
  check('changing collection settings blocks saving old readings',!last('/api/source-volume-calibration'));

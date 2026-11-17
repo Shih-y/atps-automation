@@ -21,26 +21,27 @@ window.ATPSManualBatch = ({api,action,bind,notice,getState}) => {
       if(items.reduce((sum,item)=>sum+item.volume_ml,0)>10.000000001)throw Error(`${sample}号瓶本次加入体积不能超过10 mL，请扣除瓶内已有液体`);recipes.push({sample,items});
     }
     if(!recipes.length)throw Error('请至少填写一瓶大于0的体积');
-    return {recipes,mixing:{steps:number($('mixSteps'),'混合步数',1,20000,true),rpm:number($('mixRpm'),'混合转速',.1,100),timeout_s:number($('mixTimeout'),'混合超时',1,120)}};
+    return {recipes,rinse_after:$('manualBatchClean').checked,mixing:{steps:number($('mixSteps'),'混合步数',1,20000,true),rpm:number($('mixRpm'),'混合转速',.1,100),timeout_s:number($('mixTimeout'),'混合超时',1,120)}};
   }
-  const fingerprint=()=>JSON.stringify([...$('manualBatchRows').querySelectorAll('input,select'),...['mixSteps','mixRpm','mixTimeout'].map($)].map(input=>input.value));
+  const fingerprint=()=>JSON.stringify([...$('manualBatchRows').querySelectorAll('input,select'),...['mixSteps','mixRpm','mixTimeout','manualBatchClean'].map($)].map(input=>input.type==='checkbox'?input.checked:input.value));
   const status=r=>r.completed?'动作完成':r.cancelled?'已中止':r.error?'动作中断':'等待执行';
   function describe(plan,preview=false){const map=plan.sample_port_map||mapping(getState());return (plan.recipes||[]).map((r,index)=>{
     const active=!preview&&!plan.completed&&!plan.cancelled&&!plan.error&&plan.current_index===index;
     const recipeStatus=preview?'预览':active?'执行中':(plan.cancelled||plan.error)&&!r.completed&&!r.error?'未执行（本批已中断）':status(r);
-    return `${label(r.sample,r.sample_port_map||map)} · ${recipeStatus}；请求 ${r.requested_ml} mL，参考估算 ${r.estimated_ml==null?'未知':Number(Number(r.estimated_ml).toFixed(4))} mL，实际体积待测。\n${preview?(r.items||[]).map(item=>`${item.source}口请求 ${item.requested_ml} mL / 估算 ${item.estimated_ml} mL；吸取 ${item.total_steps} 步；${item.uncertainty_note||'比例试用，实际体积待测'}`).join('；'):`指令 ${r.completed_commands??0}/${r.total_commands??'?'}；混合${r.mixing_performed?'已完成':'未完成'}；清水朝废液清洗${r.rinse_performed?'动作完成，公共管仍湿':'未完成'}`}。${r.error||''}`;
+    const cleanup=r.rinse_after?(preview?'15口清水1.5 mL → 16口空气30圈/60 rpm，均朝废液':`清洗${r.rinse_performed?'已执行':'未完成'}；${r.purge_after?`吹扫${r.purge_performed?'已执行，残水待检查，干燥未验证':'未完成'}`:'未安排吹扫（历史方法）'}`):'不清洗、不吹扫';
+    return `${label(r.sample,r.sample_port_map||map)} · ${recipeStatus}；请求 ${r.requested_ml} mL，参考估算 ${r.estimated_ml==null?'未知':Number(Number(r.estimated_ml).toFixed(4))} mL，实际体积待测。\n${preview?(r.items||[]).map(item=>`${item.source}口请求 ${item.requested_ml} mL / 估算 ${item.estimated_ml} mL；吸取 ${item.total_steps} 步；追送60 rpm/30圈；${item.uncertainty_note||'比例试用，实际体积待测'}`).join('；'):`指令 ${r.completed_commands??0}/${r.total_commands??'?'}；混合${r.mixing_performed?'已完成':'未完成'}`}；${cleanup}。${r.error||''}`;
   }).join('\n');}
   function render(state){
     const map=mapping(state);for(const select of $('manualBatchRows').querySelectorAll('select'))for(const option of select.options)option.textContent=label(option.value,map);
     for(const input of $('manualBatchRows').querySelectorAll('input,select'))input.disabled=!!pending;
-    for(const id of ['mixSteps','mixRpm','mixTimeout'])$(id).disabled=!!pending;
+    for(const id of ['mixSteps','mixRpm','mixTimeout','manualBatchClean'])$(id).disabled=!!pending;
     $('manualBatchStart').disabled=submitting||!!state.busy;
     $('manualBatchStart').textContent=pending?'重试原批请求（不会重复加料）':'开始多瓶配方';
     $('manualBatchPreview').disabled=previewing;
     const r=state.manual_batch_run;if(r)$('manualBatchProgress').textContent=`${r.cancelled?'已中止':r.completed?'动作完成':r.error?'动作中断':'执行中'} · 已完成 ${r.completed_bottles??0}/${r.total_bottles??'?'} 瓶；指令 ${r.completed_commands??0}/${r.total_commands??'?'}。\n${describe(r)}${r.error?'\n'+r.error:''}`;
   }
   function edited(){ $('manualBatchPlan').textContent='参数已改变，请重新预览；也可直接开始。'; }
-  $('manualBatchRows').addEventListener('input',edited);$('manualBatchRows').addEventListener('change',edited);for(const id of ['mixSteps','mixRpm','mixTimeout'])$(id).addEventListener('input',edited);
+  $('manualBatchRows').addEventListener('input',edited);$('manualBatchRows').addEventListener('change',edited);for(const id of ['mixSteps','mixRpm','mixTimeout','manualBatchClean'])$(id).addEventListener('input',edited);
   bind('manualBatchPreview',async()=>{const input=payload(),version=fingerprint();previewing=true;render(getState());try{const result=await api('/api/batch-recipe-preview',input);if(version===fingerprint())$('manualBatchPlan').textContent=describe(result.plan,true);return result;}catch(error){if(version===fingerprint())$('manualBatchPlan').textContent='预览失败：'+error.message;throw error;}finally{previewing=false;render(getState());}},'多瓶预览已更新；未启动泵。',false);
   bind('manualBatchStart',async()=>{
     if(submitting)return;

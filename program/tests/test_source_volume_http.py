@@ -26,7 +26,10 @@ class SourceVolumeHTTPTests(unittest.TestCase):
         plan = json.loads(raw)['plan']
         self.assertEqual(ref['id'], plan['reference']['id'])
         self.assertEqual([150], plan['chunks'])
-        self.assertEqual(2000, plan['parameters'][0]['chase']['steps'])
+        self.assertEqual(30, plan['parameters'][0]['chase']['turns'])
+        self.assertEqual(60, plan['parameters'][0]['chase']['rpm'])
+        self.assertEqual(2000,plan['reference']['chase']['steps'])
+        self.assertTrue(plan['chase_conditions_changed'])
         state = json.loads(self.request('/api/state')[1])
         self.assertEqual(1, len(state['source_volume_calibrations']))
         self.assertFalse(state['connected'])

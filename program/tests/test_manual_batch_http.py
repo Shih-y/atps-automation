@@ -23,10 +23,10 @@ class ManualBatchHTTPTests(unittest.TestCase):
         self.post('/api/connect',{})
         code,raw=self.post('/api/action',self.payload());self.assertEqual(200,code,raw)
         self.c.worker.join(5)
-        self.assertEqual([14,3,3,15,15,7,7,15],[m['port'] for m in self.c.hardware.moves])
+        self.assertEqual([14,3,3,15,16,15,7,7,15,16],[m['port'] for m in self.c.hardware.moves])
         self.assertTrue(self.c.manual_batch_run['completed'])
         self.post('/api/action',self.payload());self.c.worker.join(5)
-        self.assertEqual(8,len(self.c.hardware.moves))
+        self.assertEqual(10,len(self.c.hardware.moves))
         self.assertEqual([],self.s.lab.data['projects'])
     def test_invalid_last_bottle_does_not_start_first(self):
         self.post('/api/connect',{})

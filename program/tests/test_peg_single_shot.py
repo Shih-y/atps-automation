@@ -41,19 +41,19 @@ class PegSingleShotTests(unittest.TestCase):
                     self.assertEqual([steps], plan['chunks'])
                     self.assertEqual('single_shot', plan['delivery_mode'])
 
-    def test_combined_recipe_has_one_pair_per_source_then_mix_and_water_no_air(self):
-        run = self.run_recipe(purge_after=True)  # An older page must not restore air purge.
+    def test_combined_recipe_has_one_pair_per_source_then_mix_water_and_air(self):
+        run = self.run_recipe(purge_after=False)  # The cleaning option controls both rinse and purge.
         moves = self.c.hardware.moves
-        self.assertEqual([14, 1, 13, 1, 1, 15], [m['port'] for m in moves])
+        self.assertEqual([14, 1, 13, 1, 1, 15,16], [m['port'] for m in moves])
         self.assertEqual((30,60), (moves[1]['turns'], moves[1]['rpm']))
-        self.assertEqual(('aspirate',328), (moves[-1]['direction'],moves[-1]['steps']))
-        self.assertEqual(6,run['completed_commands'])
+        self.assertEqual(('aspirate',328), (moves[-2]['direction'],moves[-2]['steps']))
+        self.assertEqual(7,run['completed_commands'])
         self.assertEqual(2,run['completed_plugs'])
-        self.assertFalse(run['purge_performed'])
+        self.assertTrue(run['purge_performed'])
         self.assertTrue(run['rinse_performed'])
         self.assertEqual('waste',run['rinse']['destination'])
         self.assertEqual(1.5,run['rinse']['requested_ml'])
-        self.assertEqual('wet',self.c.common)
+        self.assertEqual('air_unverified',self.c.common)
         self.assertEqual(run['mixing_finished_at'],self.c.samples['1']['last_gas_stop'])
 
     def test_standalone_volume_has_no_auto_rinse_or_air(self):

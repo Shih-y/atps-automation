@@ -62,7 +62,7 @@ async function until(fn){for(let i=0;i<100;i++){if(await fn())return;await new P
   for(const [port,ml] of [[15,'.5'],[14,'1'],[13,'.3']])await page.fill('#volume'+port,ml);
   await page.locator('#recipeStart').click();await until(async()=>(await state()).recipe_run?.completed);
   s=await state();
-  check('real controller sees three single-shot sources then mixing and waste water rinse',s.recipe_run.total_plugs===3&&s.recipe_run.completed_commands===8&&s.recipe_run.mixing_performed&&!s.recipe_run.purge_performed&&s.recipe_run.rinse_performed&&s.selected_port===15);
+  check('real controller sees three single-shot sources then mixing, waste water rinse and air purge',s.recipe_run.total_plugs===3&&s.recipe_run.completed_commands===9&&s.recipe_run.mixing_performed&&s.recipe_run.purge_performed&&s.recipe_run.rinse_performed&&s.selected_port===16);
   await until(async()=>(await page.locator('#recipeProgress').innerText()).includes('动作完成'));
   await page.locator('#calibrationPanel summary').click();await page.fill('#referenceMl','.16');await page.locator('#referenceSave').click();
   await until(async()=>(await state()).water_dose_reference.mean_per_dose_ml===.16);

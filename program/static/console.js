@@ -110,7 +110,7 @@
   const recipeCalibration = node('p', '点击预览可核查各来源的当前标定；预览不启动泵。', {id:'recipeCalibrationPreview',class:'result'});
   const recipePreviewButton = node('button','预览各来源标定与步数（不动作）',{id:'recipePreviewBtn',type:'button'});
   $('recipeStart').before(recipePreviewButton,recipeCalibration);
-  const recipeFingerprint = () => JSON.stringify([$('recipeSample').value,...sources.map(p=>$('volume'+p).value)]);
+  const recipeFingerprint = () => JSON.stringify([$('recipeSample').value,...sources.map(p=>$('volume'+p).value),$('recipeClean').checked]);
   bind('recipePreviewBtn',async()=>{
     const fingerprint=recipeFingerprint(), sample=Number($('recipeSample').value),lines=[];
     for(const source of sources){
@@ -118,14 +118,14 @@
       try {const {plan:p}=await api('/api/source-volume-preview',{source,sample,volume_ml});lines.push(`${source}口 → ${sample}号瓶：${p.calibration_basis==='source_endpoint_trial'?'本来源端点实测试用参考':p.calibration_basis==='peg_operator_report_trial'?'PEG实收0.42 mL比例修正（新追送待复测）':'旧清水参考（母液未验证）'}；${p.total_steps}步（约${Number((p.total_steps/200).toFixed(3))}圈），估计 ${p.estimated_ml} mL；参考 ${p.reference?.id || '旧清水参考'}。${(p.parameters || []).map((v,i)=>`第${i+1}次吸取${v.aspirate.steps}步/${v.aspirate.rpm} rpm、追送${v.chase.turns!=null?v.chase.turns+'圈':v.chase.steps+'步'}/${v.chase.rpm} rpm`).join('；')}。${p.uncertainty_note || '实际体积待测；单剂重复性未验证'}`);}
       catch(e){lines.push(`${source}口：不适用 / ${e.message}`);}
     }
-    if(fingerprint===recipeFingerprint())recipeCalibration.textContent=lines.join('\n') || '请先填写至少一个来源体积。';
+    if(fingerprint===recipeFingerprint())recipeCalibration.textContent=lines.length?lines.join('\n')+'\n'+($('recipeClean').checked?'本瓶末尾：15口清水1.5 mL → 16口空气30圈/60 rpm，均朝废液；残水待检查。':'本瓶末尾：不清洗、不吹扫。'):'请先填写至少一个来源体积。';
   },'配方标定预览已更新；未启动泵。',false);
-  for(const id of ['recipeSample',...sources.map(p=>'volume'+p)])$(id).addEventListener('input',()=>{recipeCalibration.textContent='参数已改变，请重新预览各来源标定。';});
+  for(const id of ['recipeSample','recipeClean',...sources.map(p=>'volume'+p)])$(id).addEventListener('input',()=>{recipeCalibration.textContent='参数已改变，请重新预览各来源标定。';});
   bind('recipeStart',()=>{
     const items=sources.map(source=>({source,volume_ml:numeric('volume'+source,`${source}口体积`,0,10)})).filter(r=>r.volume_ml>0);
     if(!items.length)throw Error('请至少填写一项大于 0 的体积');
     if(items.reduce((sum,i)=>sum+i.volume_ml,0)>10.000000001)throw Error('单瓶本次配方总体积不能超过 10 mL；请扣除瓶内已有液体');
-    return action('recipe',{sample:Number($('recipeSample').value),items,mix_after:true,purge_after:false,rinse_after:true,mixing:{steps:numeric('mixSteps','混合步数',1,20000,true),rpm:numeric('mixRpm','混合转速',.1,100),timeout_s:numeric('mixTimeout','混合超时',1,120)}});
+    return action('recipe',{sample:Number($('recipeSample').value),items,mix_after:true,purge_after:false,rinse_after:$('recipeClean').checked,mixing:{steps:numeric('mixSteps','混合步数',1,20000,true),rpm:numeric('mixRpm','混合转速',.1,100),timeout_s:numeric('mixTimeout','混合超时',1,120)}});
   });
   for(const [id,operation] of [['refillBtn','refill'],['drainSourcesBtn','drain_sources'],['drainSamplesBtn','drain_samples'],['finishBtn','finish']])bind(id,()=>{
     const src=selected('data-source'),dst=selected('data-sample-line');
@@ -150,7 +150,7 @@
     const values=sources.map(p=>Number($('volume'+p).value));
     const total=values.reduce((sum,n)=>sum+n,0),ref=state.water_dose_reference,p=ref?.parameters;
     $('recipePreview').textContent=values.every(n=>Number.isFinite(n)&&n>=0)?`本次合计 ${Number(total.toFixed(4))} mL（请求量）。整数步数会取整；实际体积待测。`:'请检查各来源体积。';
-    $('referenceSummary').textContent=p&&ref.mean_per_dose_ml?`PEG临时参考：原1 mL实收0.42 mL，吸取修正×2.381（1 mL约714步 / 3.57圈、5 rpm），追送60 rpm / 30圈。各来源现场标定优先；其他来源无标定时使用旧清水参考：${p.aspirate_steps}步 ≈ ${ref.mean_per_dose_ml} mL，吸取${p.aspirate_rpm} rpm，基础追送${p.chase_steps}步 / ${p.chase_rpm} rpm。比例试用均须复测。末尾1.5 mL清洗按C端清水参考计算，不用样品端参考。`:'尚未读取保存参考；等待服务。';
+    $('referenceSummary').textContent=p&&ref.mean_per_dose_ml?`所有手动mL加料追送：60 rpm / 30圈（约30秒）。PEG临时参考：原1 mL实收0.42 mL，吸取修正×2.381（1 mL约714步 / 3.57圈、5 rpm）。各来源吸取量优先按现场标定；其他来源无标定时用旧清水参考：${p.aspirate_steps}步 ≈ ${ref.mean_per_dose_ml} mL，吸取${p.aspirate_rpm} rpm。旧参考追送条件与现在可能不同，比例交付量须复测。可选清洗1.5 mL按C端参考计算，并在清洗后自动16口吹扫。`:'尚未读取保存参考；等待服务。';
   }
   function renderTelemetry(available=true) {
     const h=state.hardware_status;
@@ -200,7 +200,7 @@
       $('referenceMl').value=state.water_dose_reference.mean_per_dose_ml;
     }
     const r=state.recipe_run;
-    if(r)$('recipeProgress').textContent=`${r.sample}号瓶（阀${(r.sample_port_map || window.ATPSBottleRouting || {})[r.sample] ?? '未知'}口） · ${r.cancelled?'已中止':r.completed?'动作完成':r.error?'动作中断':'执行中'}\n液段 ${r.completed_plugs ?? 0}/${r.total_plugs ?? '?'}；指令 ${r.completed_commands ?? 0}/${r.total_commands ?? '?'}。请求 ${r.requested_ml ?? '未记录'} mL，参考估算 ${r.estimated_ml==null?'未知':Number(r.estimated_ml.toFixed(4))} mL，实际体积待测。\n混合 ${r.mixing_performed?'已完成':'未完成'}；${r.rinse_after?`15口末尾清洗 ${r.rinse_performed?'动作完成，公共管仍湿':'未完成'}（${r.rinse?.requested_ml} mL目标，${r.rinse?.pulse?.steps}步 / ${r.rinse?.pulse?.rpm} rpm，朝废液方向）`:r.purge_after?`16口吹扫 ${r.purge_performed?'动作完成':'未完成'}（历史/标定方法）`:'未安排末尾清洗或吹扫'}。${r.error?'\n'+r.error:''}`;
+    if(r)$('recipeProgress').textContent=`${r.sample}号瓶（阀${(r.sample_port_map || window.ATPSBottleRouting || {})[r.sample] ?? '未知'}口） · ${r.cancelled?'已中止':r.completed?'动作完成':r.error?'动作中断':'执行中'}\n液段 ${r.completed_plugs ?? 0}/${r.total_plugs ?? '?'}；指令 ${r.completed_commands ?? 0}/${r.total_commands ?? '?'}。请求 ${r.requested_ml ?? '未记录'} mL，参考估算 ${r.estimated_ml==null?'未知':Number(r.estimated_ml.toFixed(4))} mL，实际体积待测。\n混合 ${r.mixing_performed?'已完成':'未完成'}；${r.rinse_after?`15口清洗 ${r.rinse_performed?'动作完成':'未完成'}（${r.rinse?.requested_ml} mL目标，${r.rinse?.pulse?.steps}步 / ${r.rinse?.pulse?.rpm} rpm，朝废液）`:'未安排清水清洗'}；${r.purge_after?`16口吹扫 ${r.purge_performed?'动作完成，检查残水；干燥未验证':'未完成'}（${r.purge?.turns!=null?r.purge.turns+'圈':r.purge?.steps+'步'} / ${r.purge?.rpm} rpm，朝废液）`:'未安排空气吹扫'}。${r.error?'\n'+r.error:''}`;
     const t=state.tubes?.last_run;if(t)$('tubeProgress').textContent=`最近管路流程：${({refill:'来源预充',drain_sources:'来源排液',drain_samples:'样品管排液',finish:'组合结束排液'})[t.operation] || t.operation} · ${t.completed?'动作完成':'进行中或中断'}。实际充满或排空情况需观察。`;
     $('logs').textContent=(state.logs || []).slice(-80).map(x=>typeof x==='string'?x:JSON.stringify(x)).join('\n') || '尚无日志';
   }

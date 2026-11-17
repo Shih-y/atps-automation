@@ -23,9 +23,9 @@ class ManualBatchTests(unittest.TestCase):
 
     def test_sequential_complete_batch_maps_ports_and_cleans_once_per_bottle(self):
         run=self.run_batch()
-        self.assertEqual([14,3,3,15,13,7,15,7,7,15],[m['port'] for m in self.c.hardware.moves])
+        self.assertEqual([14,3,3,15,16,13,7,15,7,7,15,16],[m['port'] for m in self.c.hardware.moves])
         self.assertTrue(run['completed']);self.assertEqual(2,run['completed_bottles'])
-        self.assertEqual(10,run['completed_commands'])
+        self.assertEqual(12,run['completed_commands'])
         self.assertEqual([2,5],[p['sample'] for p in run['recipes']])
         self.assertEqual(714,run['recipes'][0]['items'][0]['total_steps'])
         self.assertIsNone(run['recipes'][1]['actual_ml'])
@@ -125,7 +125,7 @@ class ManualBatchTests(unittest.TestCase):
             changed=copy.deepcopy(body);changed['recipes'][0]['sample']=1
             with self.assertRaises(ValueError):self.c.start(changed)
         finally:release.set();self.c.worker.join(5)
-        self.assertEqual(10,len(self.c.hardware.moves))
+        self.assertEqual(12,len(self.c.hardware.moves))
 
 
 if __name__=='__main__':unittest.main()

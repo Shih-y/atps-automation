@@ -41,9 +41,11 @@ class ManualBatchMixin:
         recipes=payload.get('recipes')
         if not isinstance(recipes,list) or not 1<=len(recipes)<=len(sample_port_map(self.config)) or any(not isinstance(r,dict) for r in recipes):
             raise ValueError('多瓶配方须包含1至已接管瓶数的有效配方')
+        clean=payload.get('rinse_after',True)
+        if type(clean) is not bool:raise ValueError('清洗选项须为布尔值')
         plans=[];seen=set()
         for recipe in recipes:
-            data=dict(recipe,mix_after=True,rinse_after=True,purge_after=False)
+            data=dict(recipe,mix_after=True,rinse_after=clean,purge_after=False)
             if 'mixing' in payload:data['mixing']=payload['mixing']
             plan=self._recipe_plan(data)
             if plan['sample'] in seen:raise ValueError('同一批不能重复选择同一瓶，请合并该瓶毫升数')
@@ -51,7 +53,7 @@ class ManualBatchMixin:
         return dict(recipes=plans,total_bottles=len(plans),completed_bottles=0,current_index=None,
                     total_commands=sum(p['total_commands'] for p in plans),completed_commands=0,
                     completed=False,cancelled=False,started_at=None,
-                    method='manual_multi_bottle_ml_v1',sample_port_map=sample_port_map(self.config))
+                    method='manual_multi_bottle_ml_v2',rinse_after=clean,sample_port_map=sample_port_map(self.config))
 
     def preview_manual_batch(self,payload):
         with self.lock:return dict(ok=True,plan=self._manual_batch_plan(payload))
@@ -96,7 +98,8 @@ class ManualBatchMixin:
             run.update(completed=True,current_index=None,finished_at=timestamp())
             self._save_manual_batch()
             self.log('manual_batch_completed',batch=copy.deepcopy(run))
-            self._status('IDLE',f"多瓶毫升配方已完成：{run['completed_bottles']}瓶；实际交付量未验证，公共管仍湿。")
+            cleanup='已清洗并吹扫，请检查残水；未验证完全干燥' if run['rinse_after'] else '未安排清洗与吹扫，公共管仍湿'
+            self._status('IDLE',f"多瓶毫升配方已完成：{run['completed_bottles']}瓶；实际交付量未验证。{cleanup}。")
         except Exception as exc:
             run.update(completed=False,cancelled=self.cancel.is_set(),error=str(exc),finished_at=timestamp())
             # Persistence failure must not conceal cancellation or block the

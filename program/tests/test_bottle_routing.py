@@ -22,7 +22,7 @@ class BottleRoutingTests(unittest.TestCase):
             self.assertIsNotNone(self.c.samples[bottle]['last_gas_stop'])
     def test_recipe_mix_routes_to_physical_port(self):
         self.mapped();self.run_action(dict(action='recipe',sample=5,items=[dict(source=15,volume_ml=.2)],mix_after=True))
-        self.assertEqual([15,7,7,15],[m['port'] for m in self.c.hardware.moves])
+        self.assertEqual([15,7,7,15,16],[m['port'] for m in self.c.hardware.moves])
     def test_raw_manual_port_seven_is_not_remapped(self):
         self.mapped();self.run_action(dict(action='select_port',port=7))
         self.run_action(dict(action='manual_motion',port=3,rotation='cw',turns=1,rpm=60))

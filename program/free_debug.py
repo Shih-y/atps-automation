@@ -8,7 +8,24 @@ from bottle_routing import sample_port, sample_port_map
 from tube_workflows import AIR
 from experiment_domain import plumbing_signature
 
+MANUAL_CHASE = dict(turns=30,rpm=60,timeout_s=46)
+RECIPE_AIR_PURGE = dict(turns=30,rpm=60,timeout_s=46)
+
 class FreeDebugMixin:
+    def _manual_chase_plan(self,plan):
+        """Apply the operator's mL recipe method without rewriting evidence."""
+        from controller import number,pulse_checked
+        chase=pulse_checked(MANUAL_CHASE)
+        number(chase['rpm'],.1,self.config['pump']['max_rpm'],'配置允许追送转速')
+        previous=[copy.deepcopy(p['chase']) for p in plan['parameters']]
+        changed=any(p.get('turns')!=chase['turns'] or p.get('rpm')!=chase['rpm'] for p in previous)
+        for p in plan['parameters']:p['chase']=copy.deepcopy(chase)
+        plan.update(chase_conditions_changed=changed,reference_chase_parameters=previous,
+                    delivery_reverification_required=changed or not plan.get('volume_verified',False))
+        if changed:
+            plan['uncertainty_note']+='；追送已统一为60 rpm/30圈，与原参考条件不同，实际交付须重新验证'
+        return plan
+
     def _stock_calibration_plan(self,payload):
         from controller import number,pulse_checked
         source=number(payload.get('source'),10,15,'标定来源口',True)
@@ -78,7 +95,7 @@ class FreeDebugMixin:
         sample_port(self.config,sample)
         ml=number(payload.get('volume_ml'),.001,10,'本次体积mL（10 mL瓶，需自行扣除已有液体）')
         source_plan=self._source_volume_plan(source,sample,ml)
-        if source_plan is not None:return source_plan
+        if source_plan is not None:return self._manual_chase_plan(source_plan)
         # Freeze the actual baseline used for the reported PEG observation.
         # Later water edits must not change this factor; a later source endpoint
         # reference takes precedence above and is never multiplied again.
@@ -97,26 +114,22 @@ class FreeDebugMixin:
             mean=number(ref.get('mean_per_dose_ml'),.01,1,'单剂体积参考mL')
             steps=number(refp.get('aspirate_steps'),1,100,'参考吸取步数',True)
             ar=number(refp.get('aspirate_rpm'),.1,100,'参考吸取rpm')
-            cr=number(refp.get('chase_rpm'),.1,100,'参考追送rpm')
-            cs=number(refp.get('chase_steps'),1,3000,'参考追送步数',True)
             rate=Decimal(str(mean))/steps
         total=int((Decimal(str(ml))/rate).to_integral_value(rounding=ROUND_HALF_UP))
         if total<1:raise ValueError('体积换算不足1步，请增大输入量')
         if peg:chase=copy.deepcopy(ref['chase'])
-        else:
-            chase_steps=cs+max(0,total-steps)
-            chase=dict(steps=chase_steps,rpm=cr,timeout_s=max(35,math.ceil(chase_steps*.36/cr+10)))
+        else:chase=dict(steps=refp['chase_steps'],rpm=refp['chase_rpm'],timeout_s=35)
         timeout=int((Decimal(total)*Decimal('.36')/Decimal(str(ar))+10).to_integral_value(rounding=ROUND_CEILING))
         p=dict(source=source,sample=sample,aspirate=dict(steps=total,rpm=ar,timeout_s=max(20,timeout)),chase=chase)
-        for key in ('aspirate','chase'):
+        for key in ('aspirate',):
             pulse_checked(p[key]);number(p[key]['rpm'],.1,min(100,self.config['pump']['max_rpm']),'配置允许转速')
-        return dict(requested_ml=ml,estimated_ml=float(total*rate),total_steps=total,chunks=[total],
+        return self._manual_chase_plan(dict(requested_ml=ml,estimated_ml=float(total*rate),total_steps=total,chunks=[total],
                     calibration_basis='peg_operator_report_trial' if peg else 'legacy_water_unvalidated',
                     uncertainty_note=('PEG按原1 mL实收0.42 mL修正吸取；改为一次吸取及60 rpm/30圈追送后须复测，比例估计不是实测交付量'
                                       if peg else '旧清水参考比例估算，当前来源母液实际交付量未经验证'),
                     delivery_mode='single_shot',mixing_performed=False,
                     source=source,sample=sample,parameters=[p],reference=copy.deepcopy(ref),
-                    actual_ml=None,volume_verified=False,completed=False,completed_plugs=0,started_at=timestamp())
+                    actual_ml=None,volume_verified=False,completed=False,completed_plugs=0,started_at=timestamp()))
 
     def _waste_rinse_plan(self):
         from controller import number,pulse_checked
@@ -149,16 +162,18 @@ class FreeDebugMixin:
             merged[source]=merged.get(source,Decimal(0))+Decimal(str(volume))
         rows=[self._volume_plan(dict(source=source,volume_ml=float(volume),sample=sample)) for source,volume in merged.items()]
         rinse=self._waste_rinse_plan() if rinse_after else None
+        purge=pulse_checked(RECIPE_AIR_PURGE) if rinse_after else None
+        if purge:number(purge['rpm'],.1,self.config['pump']['max_rpm'],'配置允许吹扫转速')
         requested=sum(Decimal(str(r['requested_ml'])) for r in rows)
         if requested>10:raise ValueError('单瓶本次配方总体积不得超过10 mL；请自行扣除瓶内已有液体')
         total_plugs=sum(len(r['chunks']) for r in rows)
         if total_plugs>60:raise ValueError('单瓶配方最多60个液段，请拆为明确的独立操作')
         return dict(sample_port_map=sample_port_map(self.config),sample=sample,items=rows,requested_ml=float(requested),
                     estimated_ml=sum(r['estimated_ml'] for r in rows),actual_ml=None,volume_verified=False,
-                    segment_limit_ml=None,delivery_mode='one_pair_per_source',method='manual_single_shot_water_rinse_v1',
-                    total_plugs=total_plugs,completed_plugs=0,total_commands=total_plugs*2+int(mix_after)+int(rinse_after),
-                    completed_commands=0,current=None,mix_after=mix_after,purge_after=False,
-                    mixing=mixing,purge=None,mixing_performed=False,purge_performed=False,
+                    segment_limit_ml=None,delivery_mode='one_pair_per_source',method='manual_optional_rinse_air_purge_v2',
+                    total_plugs=total_plugs,completed_plugs=0,total_commands=total_plugs*2+int(mix_after)+2*int(rinse_after),
+                    completed_commands=0,current=None,mix_after=mix_after,purge_after=rinse_after,
+                    mixing=mixing,purge=purge,mixing_performed=False,purge_performed=False,
                     rinse_after=rinse_after,rinse=rinse,rinse_performed=False,
                     legacy_purge_request_ignored=payload.get('purge_after',False),
                     uncertainty_note='手动mL比例试用；单次液段及追送条件改变，实际交付与连续加料残水影响须复测',
@@ -190,17 +205,19 @@ class FreeDebugMixin:
                 plan.update(mixing_performed=True,mixing_finished_at=timestamp())
                 self.samples[str(plan['sample'])].update(last_gas_stop=plan['mixing_finished_at'],clear_at=None,settle_s=None)
                 self._lab_event('progress',plan=plan)
-            if plan['purge_after']:
-                plan['current']=dict(item_index=None,chunk_index=None,phase='purge')
-                self._pulse(16,'aspirate',plan['purge']);plan['completed_commands']+=1
-                plan['purge_performed']=True;self.common='air_unverified'
-                self._lab_event('progress',plan=plan)
             if plan.get('rinse_after'):
                 plan['current']=dict(item_index=None,chunk_index=None,phase='rinse')
-                self._status('RECIPE','整瓶完成：15口引入约1.5 mL清水，朝C端废液方向清洗；不做空气吹扫')
+                self._status('RECIPE','整瓶完成：15口引入约1.5 mL清水，朝C端废液方向清洗；随后16口空气吹扫')
                 self._pulse(15,'aspirate',plan['rinse']['pulse']);plan['completed_commands']+=1
                 plan.update(rinse_performed=True,rinse_finished_at=timestamp())
                 self.common='wet'
+                self._lab_event('progress',plan=plan)
+            if plan['purge_after']:
+                plan['current']=dict(item_index=None,chunk_index=None,phase='purge')
+                self._status('RECIPE','16口吸入空气，向C端废液吹扫；动作结束后检查水柱与悬滴，水膜未验证')
+                self._pulse(16,'aspirate',plan['purge']);plan['completed_commands']+=1
+                plan.update(purge_performed=True,purge_finished_at=timestamp())
+                self.common='air_unverified'
                 self._lab_event('progress',plan=plan)
             self._check()
             plan.update(completed=True,current=None,finished_at=timestamp())

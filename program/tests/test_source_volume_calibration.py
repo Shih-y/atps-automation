@@ -30,11 +30,13 @@ class SourceVolumeTests(unittest.TestCase):
         from controller import Controller
         self.assertEqual(a,Controller(self.tmp.name).snapshot()['source_volume_calibrations'][0])
 
-    def test_source_reference_scales_with_frozen_chase(self):
+    def test_source_reference_scales_with_explicit_manual_chase_override(self):
         ref=self.save(min_steps=10,max_steps=240)
         p=self.c.preview_source_volume(dict(source=14,sample=2,volume_ml=1.))['plan']
         self.assertEqual([200],p['chunks']);self.assertEqual(ref['id'],p['reference']['id'])
-        self.assertEqual([900],[q['chase']['steps'] for q in p['parameters']])
+        self.assertEqual([30],[q['chase']['turns'] for q in p['parameters']])
+        self.assertEqual(900,p['reference']['chase']['steps'])
+        self.assertTrue(p['chase_conditions_changed'])
         self.assertEqual('source_endpoint_trial',p['calibration_basis']);self.assertFalse(p['volume_verified'])
         self.assertEqual([],self.c.hardware.moves)
 
@@ -105,7 +107,7 @@ class SourceVolumeTests(unittest.TestCase):
         self.c.config['free_debug']=True
         self.c.start(dict(action='volume',source=14,sample=2,volume_ml=1.6));self.c.worker.join(5)
         self.assertEqual([320],[m['steps'] for m in self.c.hardware.moves if m['port']==14])
-        self.assertEqual([900],[m['steps'] for m in self.c.hardware.moves if m['port']==2])
+        self.assertEqual([30],[m['turns'] for m in self.c.hardware.moves if m['port']==2])
         self.assertTrue(self.c.volume_run['completed'])
 
     def test_saved_reference_does_not_alias_operator_payload(self):

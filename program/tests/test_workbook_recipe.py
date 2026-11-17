@@ -25,15 +25,15 @@ class WorkbookRecipeTests(unittest.TestCase):
     def test_recipe_mixes_once_after_all_components_then_rinses_once(self):
         run = self.run_recipe(items=[dict(source=14, volume_ml=1.), dict(source=13, volume_ml=.3)])
         moves = self.c.hardware.moves
-        self.assertEqual([14, 2, 13, 2, 2, 15], [m['port'] for m in moves])
-        self.assertEqual([714, 90, 2045, 20, 328], [m['steps'] for m in moves if 'steps' in m])
+        self.assertEqual([14, 2, 13, 2, 2, 15,16], [m['port'] for m in moves])
+        self.assertEqual([714, 90, 20, 328], [m['steps'] for m in moves if 'steps' in m])
         self.assertEqual(30,moves[1]['turns'])
-        self.assertEqual('dispense', moves[-2]['direction'])
-        self.assertEqual(328, moves[-1]['steps'])
+        self.assertEqual('dispense', moves[-3]['direction'])
+        self.assertEqual(328, moves[-2]['steps'])
         self.assertTrue(run['completed'])
         self.assertTrue(run['mixing_performed'])
-        self.assertFalse(run['purge_performed']); self.assertTrue(run['rinse_performed'])
-        self.assertEqual(6, run['completed_commands'])
+        self.assertTrue(run['purge_performed']); self.assertTrue(run['rinse_performed'])
+        self.assertEqual(7, run['completed_commands'])
         self.assertEqual(2, run['completed_plugs'])
         self.assertIsNone(run['actual_ml'])
         self.assertEqual(run['mixing_finished_at'], self.c.samples['2']['last_gas_stop'])
@@ -74,7 +74,7 @@ class WorkbookRecipeTests(unittest.TestCase):
         self.assertFalse(run['mixing_performed'])
         self.assertFalse(run['purge_performed'])
         self.run_recipe(mixing=dict(steps=30,rpm=4,timeout_s=15))
-        self.assertEqual(30,self.c.hardware.moves[-2]['steps'])
+        self.assertEqual(30,self.c.hardware.moves[-3]['steps'])
 
     def test_invalid_new_request_clears_previous_completed_run(self):
         self.run_recipe()
@@ -102,7 +102,7 @@ class WorkbookRecipeTests(unittest.TestCase):
         self.assertEqual(0,run['completed_commands'])
         hardware.move = original
         self.run_recipe(items=[dict(source=13,volume_ml=.15)])
-        self.assertEqual([13,2,2,15],[m['port'] for m in hardware.moves])
+        self.assertEqual([13,2,2,15,16],[m['port'] for m in hardware.moves])
 
     def reference_payload(self, **extra):
         return dict(mean_per_dose_ml=.2, sample=1, aspirate_steps=45,

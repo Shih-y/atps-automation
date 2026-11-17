@@ -20,17 +20,19 @@
 <div class="telemetry"><div><small>泵读回</small><strong id="pumpStatus">状态未知</strong></div><div><small>阀读回</small><strong id="valveStatus">阀位未知</strong></div><div><small>流向</small><strong id="flowStatus">等待有效读回</strong></div></div><p id="telemetryDetail" class="muted">界面不推断已停止、已充满或实际交付量。</p>
 <p id="serverMessage" class="muted" aria-live="polite"></p></section>
 <section class="card manual-batch" id="manualBatchCard"><div class="section-head"><h2>多瓶毫升配方</h2><span class="badge">按瓶顺序 · 一次启动</span></div>
-<p class="muted">每行选择瓶号并填写来源体积（mL）；全为 0 的行跳过。每瓶最多加入 10 mL，请扣除已有液体。每个来源一次吸取、一次追送；每瓶末尾混合一次，再用 15 口清水 1.5 mL 朝废液方向清洗，公共管仍有残水，实际交付量待测。</p>
+<p class="muted">每行选择瓶号并填写来源体积（mL）；全为 0 的行跳过。每瓶最多加入 10 mL，请扣除已有液体。每个来源一次吸取、一次追送（60 rpm / 30圈）；每瓶末尾混合一次，实际交付量待测。</p>
 <div class="table-scroll"><table class="manual-batch-table"><caption>各瓶本次加入体积 / mL</caption><thead><tr><th>目标瓶 / 物理阀口</th><th>10 · 柠檬酸三钠</th><th>11 · 硫酸铵</th><th>12 · 硫酸钠</th><th>13 · 磷酸氢二钾</th><th>14 · PEG4000</th><th>15 · 清水</th></tr></thead><tbody id="manualBatchRows"></tbody></table></div>
-<p class="muted">沿用下方「单瓶配方」中的瓶末混合参数；可直接开始，预览不启动泵。</p><div class="controls"><button id="manualBatchPreview" type="button">预览多瓶配方（不动作）</button><button id="manualBatchStart" type="button" class="primary">开始多瓶配方</button></div>
+<label class="check"><input id="manualBatchClean" type="checkbox" checked>每瓶完成后清洗并吹扫（15口清水1.5 mL → 16口空气，均朝废液）</label>
+<p class="muted">取消勾选则不清洗、不吹扫。空气吹扫30圈 / 60 rpm（约30秒）；检查公共管无连续水柱、C端无明显悬滴，仍有残水可点「16口空气吹扫」补吹。动作完成不等于无水膜或已洗净。沿用下方「单瓶配方」中的混合参数；可直接开始，预览不启动泵。</p><div class="controls"><button id="manualBatchPreview" type="button">预览多瓶配方（不动作）</button><button id="manualBatchStart" type="button" class="primary">开始多瓶配方</button></div>
 <p id="manualBatchPlan" class="result" aria-live="polite">尚未预览；填写瓶号与 mL 后可直接开始。</p><p id="manualBatchProgress" class="result" aria-live="polite">尚未运行多瓶配方。</p></section>
 <div class="work-grid">
 <section class="card recipe"><div class="section-head"><h2>单瓶配方</h2><span class="badge">一次启动 · 完整流程</span></div>
 <label class="target">目标样品瓶<select id="recipeSample" data-samples></select></label>
 <p class="muted">按下表顺序加入；体积填 0 跳过。每个来源一次吸取、一次追送，不再按 0.8 mL 拆段。超出单次指令或标定范围时，整份配方不启动。</p>
 <table class="recipe-table"><thead><tr><th>来源口</th><th>本次加入 / mL</th></tr></thead><tbody id="recipeRows"></tbody></table>
-<div class="sequence">各来源一次吸取 → 追送到目标瓶 → 全部加入后吹气混合 → 15口引入约1.5 mL清水，朝废液方向清洗</div>
-<p class="muted">来源之间不清洗、不吹扫；末尾不做16口空气吹扫。混合默认20步 / 5 rpm。末尾清水不计入样品配方；清洗后公共管仍湿，不表示全管洗净或排空，残水可能影响下一次加料。</p>
+<div class="sequence">各来源一次吸取 → 60 rpm / 30圈追送到目标瓶 → 全部加入后吹气混合 → 按勾选项清洗并吹扫</div>
+<label class="check"><input id="recipeClean" type="checkbox" checked>本瓶完成后清洗并吹扫（15口清水1.5 mL → 16口空气，均朝废液）</label>
+<p class="muted">取消勾选则不清洗、不吹扫；来源之间也不清洗、不吹扫。混合默认20步 / 5 rpm。清洗水不计入样品；随后16口吹扫30圈 / 60 rpm（约30秒）。检查公共管无连续水柱、C端无明显悬滴，仍有残水可单独补吹。水膜与洗净程度须实测，程序不会自动认定已干燥。</p>
 <details id="mixingPanel"><summary>可选：调整瓶末吹气混合</summary><div class="fields two"><label>混合步数<input id="mixSteps" type="number" min="1" max="20000" step="1" value="20"></label><label>混合 / rpm<input id="mixRpm" type="number" min="0.1" max="100" step="0.1" value="5"></label><label>动作超时 / s<input id="mixTimeout" type="number" min="1" max="120" step="1" value="10"></label></div><p class="muted">仅在所有来源加入后执行一次。超时须覆盖动作时长；服务会在开始前校验整个配方。</p></details>
 <p id="referenceSummary" class="reference">换算参考：等待服务读回</p><p id="recipePreview" class="muted"></p>
 <button id="recipeStart" class="primary wide">开始整瓶配方</button><p id="recipeProgress" aria-live="polite" class="result">尚未运行。本次总体积上限 10 mL，请自行扣除瓶内已有液体。</p>

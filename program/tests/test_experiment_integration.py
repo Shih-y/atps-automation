@@ -26,7 +26,7 @@ class ExperimentControllerTests(unittest.TestCase):
         self.assertFalse(self.c.busy)
     def test_port_ten_is_available_for_manual_and_recipe(self):
         self.run_action(dict(action='recipe',sample=6,items=[dict(source=10,volume_ml=.15)]))
-        self.assertEqual([10,6,6,15],[r['port'] for r in self.c.hardware.moves])
+        self.assertEqual([10,6,6,15,16],[r['port'] for r in self.c.hardware.moves])
         self.assertIn('10',self.c.sources)
         self.assertEqual(80,self.c.config['geometry']['source_cm']['10'])
     def test_compiled_recipe_records_each_command_and_completion(self):
