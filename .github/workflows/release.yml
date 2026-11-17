@@ -46,7 +46,7 @@ jobs:
           }
       - name: Build one-file desktop executable
         run: python build_windows.py
-      - name: Packaged desktop smoke test
+      - name: Packaged desktop smoke test (basic)
         run: node tests/browser/desktop_smoke.js
       - name: Stage release files
         shell: pwsh

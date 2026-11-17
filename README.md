@@ -2,6 +2,8 @@
 
 [![Windows tests](https://github.com/Shih-y/atps-automation/actions/workflows/tests.yml/badge.svg)](https://github.com/Shih-y/atps-automation/actions/workflows/tests.yml)
 
+2026.11.17.1 调整发布验收：保留基础 EXE 检查，将依赖屏幕和焦点的原生窗口交互移到独立手动 workflow。
+
 2026.11.17 更新桌面标题栏、窗口拖动与缩放、细滚动条和表单控件对齐，修复长项目名称下的停止按钮可见性与服务异常提示。完整版本变更见 [更新日志](CHANGELOG.md)。
 
 2026.11.15.2 修复局部规划失败导致多瓶任务提前结束的问题，并将研究范围作为整数步预计组成的独立硬边界。增加各来源在样品瓶端的体积标定、适用条件与指定mL换算。操作见[分来源体积标定与修复说明](docs/2026-11-15_分来源体积标定与修复说明.txt)。

@@ -29,6 +29,16 @@ experiment_live_frame.js：启动专用8879假硬件服务，以canvas.captureSt
 desktop_smoke.js直接启动构建后的EXE，以隔离数据目录验收六页、合成相机、导出和关闭。
 ATPS_EXE可指定待验收EXE；ATPS_TEST_TEMP_ROOT可指定测试专用的可写临时目录。
 测试会关闭自己创建的EXE进程树，不会关闭其他程序。新发布流水线包含此验收。
+默认只运行基础EXE验收，不执行依赖屏幕和焦点的原生缩放、拖动或标题栏双击。
+需要真实桌面交互检查时，运行 node tests/browser/desktop_smoke.js --native-interactions，
+或在Actions中手动运行 Windows desktop interactions (manual)，选择待验收的分支。
+验收tag可使用 gh workflow run desktop-interactions.yml --ref <tag>。
+手动入口需先将workflow合入默认分支；待验收的ref也须包含该workflow和测试脚本。
+手动workflow独立构建并验收，不作为release依赖；包含真实鼠标的顶部/顶角缩放、
+最大化拖动还原、标题栏双击，以及原生系统缩放循环和窗口截图。
+屏幕工作区须容纳最小窗口及拖动余量；仅手动workflow在验收前通过
+Set-DisplayResolution -Width 1920 -Height 1080 -Force 设置runner分辨率。
+本地测试不会自动修改显示设置；尺寸不足时输出工作区、DPI及最大拖动尺寸并报错。
 
 2026.11.14.1 同瓶研究：
 continuation_console.js：隔离假HTTP验证同瓶三步预览、单次与范围设置、创建/启动分离、库存、暂停/恢复、历史链、密度依据及二水柠檬酸三钠浓度换算。

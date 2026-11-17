@@ -1,9 +1,11 @@
 // Smoke-test the actual packaged Windows executable with an isolated data dir.
 // Camera input is a canvas stream; real serial connection is never requested.
+// --native-interactions opts into screen/focus-dependent resize and caption tests.
 const {spawn,execFileSync}=require('child_process');
 const fs=require('fs'),path=require('path'),assert=require('assert'),net=require('net');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 const root=path.resolve(__dirname,'../..');
+const nativeInteractions=process.argv.includes('--native-interactions');
 const output=path.join(__dirname,'test_output','desktop');fs.mkdirSync(output,{recursive:true});
 const data=fs.mkdtempSync(path.join(output,'data-'));
 let child,browser;
@@ -43,18 +45,20 @@ async function closeNativeWindow(page){
 (async()=>{
   let {context,page,port}=await launch();
   await page.waitForSelector('#windowControls:not([hidden])');
-  console.log(execFileSync(process.env.PYTHON||'python',[path.join(__dirname,'desktop_resize.py'),data,'--physical'],{windowsHide:true,stdio:'pipe'}).toString().trim());
-  console.log(execFileSync(process.env.PYTHON||'python',[path.join(__dirname,'desktop_resize.py'),data],{windowsHide:true,stdio:'pipe'}).toString().trim());
-  // Crossing monitors during native drag may change DPI. Wait for the restored
-  // viewport to settle instead of assuming its old CSS pixel size survives.
-  await page.evaluate(()=>new Promise(resolve=>{
-    let previous='',stable=0;
-    const timer=setInterval(()=>{
-      const size=innerWidth+','+innerHeight;
-      stable=size===previous?stable+1:0;previous=size;
-      if(stable>=3){clearInterval(timer);resolve();}
-    },100);
-  }));
+  if(nativeInteractions){
+    console.log(execFileSync(process.env.PYTHON||'python',[path.join(__dirname,'desktop_resize.py'),data,'--physical'],{windowsHide:true,encoding:'utf8',stdio:'pipe'}).trim());
+    console.log(execFileSync(process.env.PYTHON||'python',[path.join(__dirname,'desktop_resize.py'),data],{windowsHide:true,encoding:'utf8',stdio:'pipe'}).trim());
+    // Crossing monitors during native drag may change DPI. Wait for the restored
+    // viewport to settle instead of assuming its old CSS pixel size survives.
+    await page.evaluate(()=>new Promise(resolve=>{
+      let previous='',stable=0;
+      const timer=setInterval(()=>{
+        const size=innerWidth+','+innerHeight;
+        stable=size===previous?stable+1:0;previous=size;
+        if(stable>=3){clearInterval(timer);resolve();}
+      },100);
+    }));
+  }
   assert.equal(await page.locator('header #runStatus, header #stopBtn').count(),0);
   const headerBounds=await page.locator('header').boundingBox();
   const workspaceBounds=await page.locator('#workspace').boundingBox();
@@ -73,7 +77,7 @@ async function closeNativeWindow(page){
   await page.locator('#windowControls').screenshot({path:path.join(output,'window-controls.png')});
   await page.locator('#windowClose').hover();
   await page.locator('#windowControls').screenshot({path:path.join(output,'window-controls-close-hover.png')});
-  execFileSync(process.env.PYTHON||'python',[path.join(__dirname,'desktop_resize.py'),data,'--capture'],{windowsHide:true,stdio:'pipe'});
+  if(nativeInteractions)execFileSync(process.env.PYTHON||'python',[path.join(__dirname,'desktop_resize.py'),data,'--capture'],{windowsHide:true,encoding:'utf8',stdio:'pipe'});
   await page.mouse.move(300,200);
   assert.equal(await page.locator('.pywebview-drag-region').count(),0,'programmatic pywebview dragging is disabled');
   assert.equal(await page.locator('.window-drag-area').evaluate(e=>getComputedStyle(e).getPropertyValue('app-region')),'drag');
@@ -123,7 +127,7 @@ async function closeNativeWindow(page){
   assert(fs.readdirSync(path.join(data,'experiments','backups')).some(n=>n.startsWith('before-schema-')));
   const restarted=await(await context.request.get(`http://127.0.0.1:${port}/api/state`)).json();assert.equal(restarted.connected,false);assert.equal(restarted.busy,false);
   await closeNativeWindow();
-  console.log('PASS packaged EXE: custom window controls, thin scrollbars, isolated first launch, six pages, synthetic camera, data directory, export, custom/native close, legacy migration backup and no auto-resume; no hardware');
+  console.log('PASS packaged EXE '+(nativeInteractions?'with native interactions':'basic smoke')+': custom window controls, thin scrollbars, isolated first launch, six pages, synthetic camera, data directory, export, custom/native close, legacy migration backup and no auto-resume; no hardware');
 })().catch(e=>{console.error(e,childOutput);process.exitCode=1;}).finally(async()=>{
   if(browser)await browser.close().catch(()=>{});
   if(child&&child.exitCode===null){

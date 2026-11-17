@@ -144,6 +144,16 @@ work_area = wintypes.RECT()
 assert user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(work_area), 0)
 width, height = round(1100*scale)+80, round(700*scale)+80
 if '--physical' in sys.argv:
+    work_width, work_height = work_area.right-work_area.left, work_area.bottom-work_area.top
+    max_width, max_height = user32.GetSystemMetrics(59), user32.GetSystemMetrics(60)
+    print(f'Desktop geometry: work area={work_width}x{work_height}, DPI scale={scale:g}, '
+          f'max tracking={max_width}x{max_height}, test window={width}x{height}', flush=True)
+    # A small hosted desktop clamps native sizing before the requested drag
+    # completes. Also leave space for caption restore-on-drag below and right.
+    assert (work_width >= width+160 and work_height >= height+160
+            and max_width >= width+40 and max_height >= height+40), (
+        'Desktop too small for physical resize/restore tests; configure a larger '
+        'display (CI uses Set-DisplayResolution -Width 1920 -Height 1080 -Force)')
     cursor = wintypes.POINT()
     user32.GetCursorPos(ctypes.byref(cursor))
     was_topmost = bool(user32.GetWindowLongPtrW(hwnd, -20) & 8)
