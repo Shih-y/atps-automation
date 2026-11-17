@@ -144,7 +144,7 @@ class ControllerStopRaceTests(unittest.TestCase):
         observer = self.observe()
         self.c.start(dict(action='bubble', sample=2))
         self.c.worker.join(3)
-        self.assertEqual(2, self.c.hardware.moves[0]['port'])
+        self.assertEqual(3, self.c.hardware.moves[0]['port'])  # Logical bottle 2 uses valve port 3.
         self.assertEqual(2, observer.calls[0]['sample'])
         self.assertEqual(2, observer.completed[0]['debug_parameters']['sample'])
 

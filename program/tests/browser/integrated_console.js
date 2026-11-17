@@ -26,6 +26,11 @@ async function until(fn){for(let i=0;i<100;i++){if(await fn())return;await new P
   const state=()=>page.evaluate(async()=>await(await fetch('/api/state')).json());
   await until(async()=>(await page.locator('#referenceSummary').innerText()).includes('0.15'));
   check('production server starts disconnected without requesting camera',!(await state()).connected&&await page.evaluate(()=>cameraCalls)===0);
+  check('selectors show logical bottles and actual mapped ports',await page.locator('#recipeSample option[value="2"]').innerText()==='2号瓶（阀3口）'&&await page.locator('#recipeSample option[value="5"]').innerText()==='5号瓶（阀7口）');
+  check('undefined bottle six is unavailable',await page.locator('#recipeSample option[value="6"]').evaluate(o=>o.disabled&&o.hidden));
+  check('raw manual physical port seven is available',await page.locator('#manualPort option[value="7"]').count()===1);
+  check('persistent bottle wiring is visible', (await page.locator('#bottleRouting').innerText()).includes('4号瓶（阀6口）'));
+
 
   const png=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=1000;c.height=600;const x=c.getContext('2d');x.fillStyle='#aaa';x.fillRect(0,0,c.width,c.height);return c.toDataURL('image/png').split(',')[1];});
   await page.getByRole('button',{name:'图像判相与复核',exact:true}).click();await page.setInputFiles('#imageFile',{name:'synthetic.png',mimeType:'image/png',buffer:Buffer.from(png,'base64')});
@@ -57,7 +62,7 @@ async function until(fn){for(let i=0;i<100;i++){if(await fn())return;await new P
   for(const [port,ml] of [[15,'.5'],[14,'1'],[13,'.3']])await page.fill('#volume'+port,ml);
   await page.locator('#recipeStart').click();await until(async()=>(await state()).recipe_run?.completed);
   s=await state();
-  check('real controller sees four liquid segments then auto mixing and one end purge',s.recipe_run.total_plugs===4&&s.recipe_run.completed_commands===10&&s.recipe_run.mixing_performed&&s.recipe_run.purge_performed&&s.selected_port===16);
+  check('real controller sees three single-shot sources then mixing and waste water rinse',s.recipe_run.total_plugs===3&&s.recipe_run.completed_commands===8&&s.recipe_run.mixing_performed&&!s.recipe_run.purge_performed&&s.recipe_run.rinse_performed&&s.selected_port===15);
   await until(async()=>(await page.locator('#recipeProgress').innerText()).includes('动作完成'));
   await page.locator('#calibrationPanel summary').click();await page.fill('#referenceMl','.16');await page.locator('#referenceSave').click();
   await until(async()=>(await state()).water_dose_reference.mean_per_dose_ml===.16);

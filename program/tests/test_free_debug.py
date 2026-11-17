@@ -78,13 +78,13 @@ class FreeDebugTests(unittest.TestCase):
         self.assertEqual([],self.c.hardware.moves)
         self.assertIn('操作未执行',self.c.message)
 
-    def test_specified_volume_uses_015_reference_and_selected_route(self):
+    def test_specified_volume_uses_peg_report_and_selected_route(self):
         s=self.run_free(dict(action='volume',source=14,sample=3,volume_ml=.5))
         moves=self.c.hardware.moves
-        self.assertEqual([14,3,16],[m['port'] for m in moves])
-        self.assertEqual([150],[m['steps'] for m in moves if m['port']==14])
-        self.assertEqual(150,s['volume_run']['total_steps'])
-        self.assertAlmostEqual(.5,s['volume_run']['estimated_ml'])
+        self.assertEqual([14,3],[m['port'] for m in moves])
+        self.assertEqual([357],[m['steps'] for m in moves if m['port']==14])
+        self.assertEqual(357,s['volume_run']['total_steps'])
+        self.assertAlmostEqual(.4998,s['volume_run']['estimated_ml'])
         self.assertTrue(s['volume_run']['completed'])
         self.assertIsNone(s['volume_run']['actual_ml'])
 
@@ -99,15 +99,16 @@ class FreeDebugTests(unittest.TestCase):
     def test_volume_does_not_change_reference_or_other_targets(self):
         self.run_free(dict(action='volume',source=13,sample=6,volume_ml=.3))
         self.assertAlmostEqual(.15,self.c.water_dose_reference['mean_per_dose_ml'])
-        self.assertEqual([13,6,16],[m['port'] for m in self.c.hardware.moves])
+        self.assertEqual([13,6],[m['port'] for m in self.c.hardware.moves])
 
-    def test_one_ml_uses_two_equal_portions_without_automatic_mixing(self):
+    def test_one_ml_uses_one_corrected_peg_dose_without_automatic_mixing(self):
         s=self.run_free(dict(action='volume',source=14,sample=1,volume_ml=1.))
         moves=self.c.hardware.moves
-        self.assertEqual([14,1,14,1,16],[m['port'] for m in moves])
-        self.assertEqual(150,moves[0]['steps'])
-        self.assertEqual(2105,moves[1]['steps'])
-        self.assertEqual([150,150],s['volume_run']['chunks'])
+        self.assertEqual([14,1],[m['port'] for m in moves])
+        self.assertEqual(714,moves[0]['steps'])
+        self.assertEqual(30,moves[1]['turns'])
+        self.assertEqual(60,moves[1]['rpm'])
+        self.assertEqual([714],s['volume_run']['chunks'])
         self.assertFalse(s['volume_run']['mixing_performed'])
 
     def test_over_ten_ml_is_rejected_before_motion(self):

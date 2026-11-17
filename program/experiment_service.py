@@ -1,3 +1,4 @@
+from bottle_routing import logical_sample, sample_port
 """Persistent experiment scheduling. Hardware stop never depends on storage."""
 import copy
 import csv
@@ -474,6 +475,7 @@ class ExperimentService(ContinuationMixin, ObservationMixin):
             stock = next((s for s in self.data['stocks'] if s['port'] == body['source']), None)
             if stock is None:
                 raise ValueError('来源不存在')
+            for bottle in body.get('sample_bottles',[1]):sample_port(self.controller.config,bottle)
             cal = domain.make_calibration(body, stock, self._signature(body['source']))
             self.data['calibrations'].append(cal)
             result['calibration'] = cal
@@ -883,7 +885,10 @@ class ExperimentService(ContinuationMixin, ObservationMixin):
                 return
             target = payload.get('sample') or payload.get('target') or payload.get('debug_parameters', {}).get('sample')
             if action == 'manual_motion':
-                target = payload.get('port')
+                target = logical_sample(self.controller.config,payload.get('port'))
+                if target is None:
+                    self._save()
+                    return
             if action in ('wash', 'purge', 'prime', 'aspirate', 'reset'):
                 self._save()
                 return

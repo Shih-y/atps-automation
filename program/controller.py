@@ -13,6 +13,7 @@ import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+from bottle_routing import sample_port_map, sample_port
 from capture_store import CaptureStore, parse_time, timestamp
 from transport import SerialHardware, HardwareError, _port_name
 from serial_discovery import scan_serial_ports
@@ -22,7 +23,7 @@ from free_debug import FreeDebugMixin
 from motion_planning import motion_plan
 from source_volume_calibration import SourceVolumeMixin
 
-ALLOWED_PORTS = set(range(1, 7)) | set(range(10, 17))
+ALLOWED_PORTS = set(range(1, 8)) | set(range(10, 17))
 MAX_STEPS, MAX_RPM, MAX_SECONDS = 20000, 100, 120
 COMMISSION_STEPS, COMMISSION_RPM, COMMISSION_SECONDS = 500, 5, 30
 
@@ -46,6 +47,7 @@ def pulse_checked(p, commissioning=False, air_purge=False):
 
 def signature(config):
     payload = {k: config[k] for k in ('geometry', 'liquids', 'pump', 'valve')}
+    if 'sample_port_map' in config: payload['sample_port_map'] = sample_port_map(config)
     payload['communication'] = config.get('communication', {'port':'COM6'})
     payload['reset_pulses'] = {k:config['reset'][k] for k in ('wash','purge')}
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
@@ -59,6 +61,7 @@ def validate_config(cfg):
     communication = cfg.get('communication', {'port':'COM6'})
     if not isinstance(communication, dict) or not isinstance(communication.get('port'), str) or not communication['port'].strip(): raise ValueError('填写 RS485 串口，如 COM6')
     cfg=copy.deepcopy(cfg)
+    sample_port_map(cfg)
     g = cfg['geometry']
     # Older installations have no port 10 entry. Add only that confirmed branch;
     # keep historical liquid names and calibration evidence unchanged.
@@ -82,6 +85,7 @@ def validate_config(cfg):
 def validate_profile(p, cfg, require_validated=True):
     if not isinstance(p, dict) or not isinstance(p.get('id'), str) or not p['id'] or len(p['id']) > 100: raise ValueError('校准档案必须有短ID')
     number(p.get('source'), 10, 15, '来源口', True); number(p.get('sample'), 1, 6, '样品口', True)
+    if require_validated:sample_port(cfg,p['sample'])
     if p.get('condition') not in ('first', 'continued'): raise ValueError('校准档案须区分首次/连续交付')
     # This delivery deliberately validates only the requested 0.20 mL experiment.
     if p.get('target_ml') != .2: raise ValueError('本版仅接受0.20 mL单次验证档案；其他体积须扩展并验证')
@@ -193,7 +197,7 @@ class Controller(BenchMixin, TubeMixin, FreeDebugMixin, SourceVolumeMixin):
         action=payload.get('action')
         if action=='discard_loaded': return
         if action=='chase': self._pending_valid(payload); return
-        if action=='select_port' and type(payload.get('port')) is int and payload['port']==self.pending_plug['target']:
+        if action=='select_port' and type(payload.get('port')) is int and payload['port']==sample_port(self.config,self.pending_plug['target']):
             self._pending_valid(); return
         raise ValueError('A段有待追送液段；只能选择同一目标瓶、追送或明确弃液复位，也可停止')
 
@@ -360,14 +364,17 @@ class Controller(BenchMixin, TubeMixin, FreeDebugMixin, SourceVolumeMixin):
             self.log('validated_batch_procedure',message=message,automatic_physical_observation=False)
         else:self._ask(message)
 
+    def _sample_pulse(self, sample, direction, p, **kw):
+        return self._pulse(sample_port(self.config,sample),direction,p,**kw)
+
     def _pulse(self, port, direction, p, commissioning=False, before_move=None, manual_direction=False):
         pulse_checked(p,commissioning,air_purge=(port==16 and direction=='aspirate'))
         number(p['rpm'],.1,self.config['pump'].get('max_rpm',100),'配置允许转速')
-        if type(port) is not int or port not in ALLOWED_PORTS: raise ValueError('端口无效；7—9禁用')
+        if type(port) is not int or port not in ALLOWED_PORTS: raise ValueError('端口无效；8—9禁用')
         if direction not in ('aspirate','dispense'): raise ValueError('方向无效')
         if not manual_direction:
-            if direction == 'dispense' and port not in range(1,7): raise ValueError('反向只允许送向1—6样品口')
-            if direction == 'aspirate' and port in range(1,7): raise ValueError('禁止从样品抽吸进入公共管')
+            if direction == 'dispense' and port not in range(1,8): raise ValueError('反向只允许送向1—7物理样品口')
+            if direction == 'aspirate' and port in range(1,8): raise ValueError('禁止从样品抽吸进入公共管')
         self._notify_manual_motion()
         self._check(); self.movement_attempted=True; timed_out=threading.Event()
         def timeout():
@@ -378,7 +385,7 @@ class Controller(BenchMixin, TubeMixin, FreeDebugMixin, SourceVolumeMixin):
         try:
             self.hardware.select(port,self.cancel)
             self.selected_port=port
-            if self.pending_plug and port==self.pending_plug['target'] and direction=='dispense':
+            if self.pending_plug and port==sample_port(self.config,self.pending_plug['target']) and direction=='dispense':
                 self.pending_plug.update(target_connected=True,target_selected_at=timestamp())
                 self.log('loaded_target_connected',plug_id=self.pending_plug['id'],port=port,target_selected_at=self.pending_plug['target_selected_at'])
             if before_move: before_move()
@@ -391,7 +398,7 @@ class Controller(BenchMixin, TubeMixin, FreeDebugMixin, SourceVolumeMixin):
         self.log('pulse_completed',port=port,direction=direction,**p)
 
     def _select_port(self,port):
-        if type(port) is not int or port not in ALLOWED_PORTS: raise ValueError('端口无效；7—9禁用')
+        if type(port) is not int or port not in ALLOWED_PORTS: raise ValueError('端口无效；8—9禁用')
         timeout_s=number(self.config['valve'].get('timeout'),1,120,'选口超时秒数')
         self._notify_manual_motion()
         self._check(); self.movement_attempted=True
@@ -514,7 +521,7 @@ class Controller(BenchMixin, TubeMixin, FreeDebugMixin, SourceVolumeMixin):
         self._routine_observation(f"观察液段位于A段、与泵头保留已验证距离，未进入泵头。目标必须为{pending['target']}号瓶；确认切到此样品并反向追送，异常请取消。")
         self._pending_valid(payload); self._check_dose(p)
         self._status('CHASE','停泵后切到样品口，反向从C端吸气追送液段。')
-        self._pulse(p['sample'],'dispense',p['chase'],before_move=lambda:self._pending_valid(payload))
+        self._sample_pulse(p['sample'],'dispense',p['chase'],before_move=lambda:self._pending_valid(payload))
         s=self.samples[str(p['sample'])]
         s.update(condition='continued',dose_count=s['dose_count']+1,last_gas_stop=timestamp(),clear_at=None,
                  settle_s=p['settle_s'],timing_basis='server_confirmed_finite_command_completion',profile_id=p['id'])
@@ -556,7 +563,7 @@ class Controller(BenchMixin, TubeMixin, FreeDebugMixin, SourceVolumeMixin):
         if (datetime.now(timezone.utc)-parse_time(s['last_gas_stop'])).total_seconds()>p['max_hold_s']: raise ValueError('交付后等待已超过鼓泡档案允许范围')
         self._status('BUBBLE',f"逐瓶鼓泡：样品{p['sample']}，最多{p['bubble_count']}个有限脉冲。")
         for i in range(p['bubble_count']):
-            self._pulse(p['sample'],'dispense',p['bubble'])
+            self._sample_pulse(p['sample'],'dispense',p['bubble'])
             s.update(last_gas_stop=timestamp(),clear_at=None,settle_s=p['settle_s'],timing_basis='server_confirmed_finite_command_completion')
             if i+1<p['bubble_count']: self._wait(p['bubble_gap_s'])
 
@@ -696,8 +703,13 @@ class Controller(BenchMixin, TubeMixin, FreeDebugMixin, SourceVolumeMixin):
         if not isinstance(plan,dict):raise ValueError('缺少实验配方')
         plan=copy.deepcopy(plan)
         sample=number(plan.get('sample'),1,5,'自动实验瓶号',True)
+        sample_port(self.config,sample)
+        from experiment_domain import plumbing_signature
         items=plan.get('items')
-        if not isinstance(items,list) or not 1<=len(items)<=6:raise ValueError('实验配方来源项无效')
+        if not isinstance(items,list) or not 1<=len(items)<=6 or any(not isinstance(row,dict) for row in items):
+            raise ValueError('实验配方来源项无效')
+        geometry_signatures=plan.get('geometry_signatures',{})
+        if not isinstance(geometry_signatures,dict):raise ValueError('实验配方接管配置记录无效')
         count=0
         def checked(p):
             p=pulse_checked(p)
@@ -706,8 +718,11 @@ class Controller(BenchMixin, TubeMixin, FreeDebugMixin, SourceVolumeMixin):
             if p['timeout_s']<duration+2:raise ValueError('实验动作超时不足以完成设定圈数/步数')
         for row in items:
             source=number(row.get('source'),10,15,'来源',True)
+            if geometry_signatures.get(str(source)) != plumbing_signature(self.config,source):
+                raise ValueError('实验配方接管配置/瓶口映射已变化，请重新编译配方')
             parameters=row.get('parameters')
-            if not isinstance(parameters,list) or not parameters:raise ValueError('缺少有限分段动作')
+            if not isinstance(parameters,list) or not parameters or any(not isinstance(part,dict) for part in parameters):
+                raise ValueError('缺少有限分段动作')
             for part in parameters:
                 if part.get('source')!=source or part.get('sample')!=sample:raise ValueError('实验动作瓶号或来源不匹配')
                 checked(part.get('aspirate'));checked(part.get('chase'));count+=1
@@ -715,7 +730,7 @@ class Controller(BenchMixin, TubeMixin, FreeDebugMixin, SourceVolumeMixin):
         if not 1<=count<=60:raise ValueError('实验最多60段')
         if plan.get('mix_after') is not True or plan.get('purge_after') is not True:raise ValueError('自动实验须在整瓶完成后混合和吹扫')
         checked(plan.get('mixing'));checked(plan.get('purge'))
-        plan.update(total_plugs=count,total_commands=count*2+2,completed_plugs=0,completed_commands=0,
+        plan.update(sample_port_map=sample_port_map(self.config),total_plugs=count,total_commands=count*2+2,completed_plugs=0,completed_commands=0,
                     completed=False,cancelled=False,current=None,mixing_performed=False,purge_performed=False)
         return plan
 

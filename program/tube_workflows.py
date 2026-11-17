@@ -1,3 +1,4 @@
+from bottle_routing import sample_port
 """Tube refill and drainage; legacy water-only recipe is retired."""
 import copy
 from capture_store import timestamp
@@ -73,7 +74,7 @@ class TubeMixin:
                                           uncertainty_note='末端已移至废液并进行排液；下次重新放回样品瓶')
             self.tubes['common_air_seen']=False
             self._status('TUBES_DRAIN',f'样品{port}管向废液送气：1000步／15 rpm。')
-            self._pulse(port,'dispense',SAMPLE_AIR)
+            self._sample_pulse(port,'dispense',SAMPLE_AIR)
             self._tube_observation(f'样品{port}支管排液已停泵。确认硬管无可见连续水柱、末端无明显悬滴且未飞溅。未排净请选择停止后单独重做。样品内容物不应被抽走。')
             if not self.free_debug:self.tubes['sample_drained']=sorted(set(self.tubes['sample_drained']+[port]))
             self.log('tube_sample_drain_completed',port=port,observed=not self.free_debug,fully_dry_verified=False)
@@ -89,6 +90,7 @@ class TubeMixin:
             raise ValueError('未知管路维护步骤')
         selected=ports(payload.get('sources'),range(10,16),'来源口') if op in ('refill','drain_sources','finish') else []
         samples=ports(payload.get('samples'),range(1,7),'样品口') if op in ('drain_samples','finish') else []
+        for sample in samples:sample_port(self.config,sample)
         self.bench.update(water_ready=False,air_ready=False,delivery_seen=False,delivery_seen_context=None,last_run=None)
         self.reset_sequence=None; self.current_delivery=None
         self.tubes['last_run']=dict(operation=op,sources=selected,samples=samples,started_at=timestamp(),completed=False,volume_verified=False)

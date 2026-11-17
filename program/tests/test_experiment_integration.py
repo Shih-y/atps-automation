@@ -18,6 +18,7 @@ class ExperimentControllerTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory()
         self.c=Controller(self.tmp.name, hardware_factory=lambda cfg:DemoHardware(cfg))
+        self.c.config.pop('sample_port_map',None)  # Legacy identity-route integration.
         self.c.connect(); self.lab=LabRecorder(); self.c.lab=self.lab
     def tearDown(self): self.c.disconnect(); self.tmp.cleanup()
     def run_action(self, payload):
@@ -25,11 +26,16 @@ class ExperimentControllerTests(unittest.TestCase):
         self.assertFalse(self.c.busy)
     def test_port_ten_is_available_for_manual_and_recipe(self):
         self.run_action(dict(action='recipe',sample=6,items=[dict(source=10,volume_ml=.15)]))
-        self.assertEqual([10,6,6,16],[r['port'] for r in self.c.hardware.moves])
+        self.assertEqual([10,6,6,15],[r['port'] for r in self.c.hardware.moves])
         self.assertIn('10',self.c.sources)
         self.assertEqual(80,self.c.config['geometry']['source_cm']['10'])
     def test_compiled_recipe_records_each_command_and_completion(self):
-        plan=self.c._recipe_plan(dict(sample=2,items=[dict(source=15,volume_ml=.15)]))
+        plan=self.c._recipe_plan(dict(sample=2,items=[dict(source=15,volume_ml=.15)],rinse_after=False))
+        # The formal mass method retains its separately validated final purge.
+        from tube_workflows import AIR
+        from experiment_domain import plumbing_signature
+        plan.update(purge_after=True,purge=copy.deepcopy(AIR),total_commands=4,
+                    geometry_signatures={'15':plumbing_signature(self.c.config,15)})
         self.run_action(dict(action='experiment_recipe',experiment_sample_id='test-sample',plan=plan))
         self.assertEqual([15,2,2,16],[r['port'] for r in self.c.hardware.moves])
         self.assertEqual([],self.lab.manual)

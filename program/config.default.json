@@ -51,7 +51,7 @@
     },
     "air16_cm": 15,
     "layout": "single_front_row",
-    "sample_count": 6
+    "sample_count": 5
   },
   "liquids": {
     "10": "30% 柠檬酸三钠（w/w）",
@@ -85,5 +85,12 @@
   "communication": {
     "port": "COM6"
   },
-  "free_debug": true
+  "free_debug": true,
+  "sample_port_map": {
+    "1": 1,
+    "2": 3,
+    "3": 4,
+    "4": 6,
+    "5": 7
+  }
 }

@@ -6,6 +6,8 @@ const root=path.resolve(__dirname,'../..'),calls=[],errors=[],checks=[];
 let server,browser,stale=false,raceReturnedId=null;
 const refs=[];
 const hardware={connected:true,busy:false,state:'CONNECTED',config:JSON.parse(fs.readFileSync(path.join(root,'config.default.json'))),logs:[],samples:{},sources:{},imaging:{},source_volume_calibrations:refs,water_dose_reference:{mean_per_dose_ml:.15,parameters:{sample:1,aspirate_steps:45,aspirate_rpm:5,chase_steps:2000,chase_rpm:30}}};
+// Exercise historical six-bottle calibration records.
+delete hardware.config.sample_port_map;
 const lab={stocks:[{port:13,version:1,batch:'A',temperature_c:25}],samples:[],projects:[],rounds:[],bottles:[],photo_jobs:[],camera:{mapping_version:1}};
 const reply=(r,x,status=200)=>{r.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});r.end(JSON.stringify(x));};
 const last=u=>calls.filter(c=>c.url===u).at(-1)?.body;
@@ -23,7 +25,7 @@ async function until(fn){for(let i=0;i<80;i++){if(await fn())return;await new Pr
   }
   if(req.url==='/api/source-volume-preview'){
    if(stale)return reply(res,{error:'来源批次已改变；标定不适用，须重新标定'},400);
-   return reply(res,{ok:true,plan:{source:body.source,sample:body.sample,requested_ml:body.volume_ml,estimated_ml:body.volume_ml,total_steps:90,chunks:[45,45],parameters:[{aspirate:{steps:45,rpm:5},chase:{steps:2000,rpm:30}},{aspirate:{steps:45,rpm:5},chase:{steps:2000,rpm:30}}],reference:{id:'ref-1'},calibration_basis:'source_endpoint_trial',uncertainty_note:'单剂端点实测；较大剂量仅按比例估计，实际体积待测'}});
+   return reply(res,{ok:true,plan:{source:body.source,sample:body.sample,requested_ml:body.volume_ml,estimated_ml:body.volume_ml,total_steps:90,chunks:[90],parameters:[{aspirate:{steps:90,rpm:5},chase:{steps:2000,rpm:30}}],reference:{id:'ref-1'},calibration_basis:'source_endpoint_trial',uncertainty_note:'单剂端点实测；较大剂量仅按比例估计，实际体积待测'}});
   }
   if(req.url==='/api/action'){
    if(body.action==='stock_calibration'){
@@ -80,7 +82,7 @@ async function until(fn){for(let i=0;i<80;i++){if(await fn())return;await new Pr
  check('nonfinite motion cannot be submitted',calls.filter(c=>c.url==='/api/action').length===count+1);await fill('aspirate_rpm','5');
  const p=page.locator('#source-volume-preview-form');await p.locator('[name=source]').selectOption('13');await p.locator('[name=sample]').selectOption('6');await p.locator('[name=volume_ml]').fill('.4');await p.locator('button[type=submit]').click();await until(()=>last('/api/source-volume-preview'));
  await until(async()=>(await page.locator('#source-volume-plan').innerText()).includes('比例'));
- check('preview displays measured basis versus proportional estimate without motion',calls.filter(c=>c.url==='/api/action').length===count+1&&(await page.locator('#source-volume-plan').innerText()).includes('90')&&(await page.locator('#source-volume-plan').innerText()).includes('第2段：吸取 45步 / 5 rpm，追送 2000步 / 30 rpm')&&(await page.locator('#source-volume-plan').innerText()).includes('ref-1'));
+ check('preview displays measured basis versus proportional estimate without motion',calls.filter(c=>c.url==='/api/action').length===count+1&&(await page.locator('#source-volume-plan').innerText()).includes('90')&&(await page.locator('#source-volume-plan').innerText()).includes('第1次：吸取 90步 / 5 rpm，追送 2000步 / 30 rpm')&&(await page.locator('#source-volume-plan').innerText()).includes('ref-1'));
  await page.locator('#source-volume-run').click();await until(()=>last('/api/action').action==='volume');
  check('manual single volume uses backend planner',JSON.stringify(last('/api/action'))===JSON.stringify({action:'volume',source:13,sample:6,volume_ml:.4}));
  stale=true;await p.locator('button[type=submit]').click();await until(async()=>(await page.locator('#source-volume-plan').innerText()).includes('批次已改变'));

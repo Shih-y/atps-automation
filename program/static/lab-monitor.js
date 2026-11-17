@@ -193,7 +193,7 @@ window.ATPSLabPages.monitor = (ctx, page) => {
           '物料依据 / 续加条件',
         ],
         (ctx.state.bottles || []).map((b) => [
-          b.bottle,
+          `${b.bottle}号瓶（阀${(window.ATPSBottleRouting || {})[b.bottle] ?? b.bottle}口）`,
           { free: '空闲', assigned: '已分配', occupied: '占用', needs_replacement: '待换瓶' }[
             b.state
           ] ||

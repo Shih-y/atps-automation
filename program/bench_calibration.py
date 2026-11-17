@@ -1,3 +1,4 @@
+from bottle_routing import sample_port
 """Observable water trials with no fabricated formal calibration status."""
 import copy
 import json
@@ -81,6 +82,7 @@ class BenchMixin:
             raise ValueError('整圈称重前，先引水至C端连续出水并点击已出水；公共管必须充水')
         if operation=='dose_water':
             sample=_number(payload.get('sample'),1,6,'样品瓶号',True)
+            sample_port(self.config,sample)
             count=_number(payload.get('count',1),1,5,'本组剂数',True)
             if count not in (1,5):raise ValueError('先试1剂，成组称量每组5剂')
             steps=_number(payload.get('aspirate_steps',45),1,100,'液段吸取步数',True)
@@ -117,7 +119,7 @@ class BenchMixin:
                 self._pulse(15,'aspirate',{'steps':steps,'rpm':aspirate_rpm,'timeout_s':aspirate_timeout})
                 # Low-speed bench evidence is approximately 200 steps/revolution.
                 # Allow 20% timing margin + 10 s, retaining the old 35 s minimum.
-                self._pulse(sample,'dispense',{'steps':chase,'rpm':chase_rpm,'timeout_s':chase_timeout})
+                self._sample_pulse(sample,'dispense',{'steps':chase,'rpm':chase_rpm,'timeout_s':chase_timeout})
                 b['sample_counts'][str(sample)]=b['sample_counts'].get(str(sample),0)+1
                 b['last_run']['completed_doses']=i+1
                 self.log('bench_dose_trial_completed',sample=sample,trial_index=i+1,aspirate_steps=steps,chase_steps=chase,aspirate_rpm=aspirate_rpm,chase_rpm=chase_rpm,measured_ml=None)

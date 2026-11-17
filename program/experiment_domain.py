@@ -1,5 +1,6 @@
 """Pure mass-domain planning. Estimates are not measured deliveries."""
 import math, statistics, uuid, copy, hashlib, json
+from bottle_routing import sample_port_map
 from capture_store import timestamp
 
 def num(x, lo=0, hi=1000000000.0):
@@ -27,6 +28,7 @@ def plumbing_signature(config, source=None):
         geometry['source_cm'] = branches
     context = dict(geometry=geometry, pump=config.get('pump'), valve=config.get('valve'),
                    reset_pulses={k: config.get('reset', {}).get(k) for k in ('wash', 'purge')})
+    if 'sample_port_map' in config: context['sample_port_map'] = sample_port_map(config)
     return hashlib.sha256(json.dumps(context, sort_keys=True, ensure_ascii=False,
                                      allow_nan=False).encode()).hexdigest()
 

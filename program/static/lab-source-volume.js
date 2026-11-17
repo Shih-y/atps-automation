@@ -2,7 +2,7 @@
 // Endpoint volume records remain separate from the formal mass calibration.
 window.ATPSSourceVolume = (ctx, page) => {
   const ports = [10, 11, 12, 13, 14, 15].map(n => [n, `${n}口`]);
-  const bottles = [1, 2, 3, 4, 5, 6].map(n => [n, `${n}号瓶`]);
+  const bottles = Object.entries(window.ATPSBottleRouting || {1:1,2:2,3:3,4:4,5:5,6:6}).map(([n,p]) => [Number(n), `${n}号瓶（阀${p}口）`]);
   const card = ctx.card(page, '各来源样品端体积标定（手动 mL 试用）',
     '①先在上方保存本批次母液及温度，确认预充和管口位置。②在实际样品管出口收集，每组倒空并去皮，点击试送后等停止。③填写每组收集总量并保存。保存和预览均不启动泵；正式质量实验仍使用独立的 g/步标定。');
   const positive = (raw, label, integer = false) => {
@@ -19,7 +19,8 @@ window.ATPSSourceVolume = (ctx, page) => {
     const pulse = prefix => ({steps: positive(d[prefix + '_steps'], '步数', true), rpm: positive(d[prefix + '_rpm'], '转速'), timeout_s: positive(d[prefix + '_timeout_s'], '超时')});
     const doses = positive(d.doses, '每组剂数', true);
     if (doses > 20) throw Error('每组最多20剂');
-    return {source: Number(d.source), sample: Number(d.sample), doses, aspirate: pulse('aspirate'), chase: pulse('chase')};
+    const chase=d.chase_unit==='turns'?{turns:positive(d.chase_turns,'追送整圈数',true),rpm:positive(d.chase_rpm,'追送转速'),timeout_s:positive(d.chase_timeout_s,'超时')}:pulse('chase');
+    return {source: Number(d.source), sample: Number(d.sample), doses, aspirate: pulse('aspirate'), chase};
   }
   const data = form => Object.fromEntries(new FormData(form));
   let readingBinding = null, collectionRunId = null, collectionBeforeId = null, collectionPending = false, readingStock = null;
@@ -29,6 +30,7 @@ window.ATPSSourceVolume = (ctx, page) => {
     ['doses', '每组试送剂数（1—20）', 1],
     ['aspirate_steps', '每剂吸取步数', 45], ['aspirate_rpm', '吸取 / rpm', 5], ['aspirate_timeout_s', '吸取超时 / s', 30],
     ['chase_steps', '每剂追送步数', 2000], ['chase_rpm', '追送 / rpm', 30], ['chase_timeout_s', '追送超时 / s', 40],
+    ['chase_unit', '追送方式（与实际加液一致）', 'steps', [['steps', '有限步数'], ['turns', '原生整圈（PEG本次为30圈）']]], ['chase_turns', '整圈方式：每剂追送圈数', 30],
     ['temperature_c', '本次温度 / ℃（与母液记录一致）', 25],
     ['reading_unit', '原始读数单位', 'ml', [['ml', '每组总收集体积 / mL'], ['g', '每组总净质量 / g（须实测密度）']]],
     ['groups', '各组总读数（逗号分隔；不是每剂量）', ''],
@@ -107,7 +109,7 @@ window.ATPSSourceVolume = (ctx, page) => {
         `${r.source}口 / v${r.version} / ${r.id}`,
         `体积 mL: ${(r.groups_ml || []).join('、')}；每组${r.doses ?? '?'}剂${r.raw_evidence?.groups_g ? `；原始净质量 g: ${r.raw_evidence.groups_g.join('、')}；实测密度 ${r.raw_evidence.density_g_ml} g/mL；${r.raw_evidence.density_evidence}` : ''}`,
         `${r.mean_per_dose_ml} mL；${r.aspirate?.steps}步`,
-        `批次 ${r.stock_batch || '未记录'}；${r.temperature_c}℃；瓶${(r.sample_bottles || []).join('、')}；${r.min_steps}—${r.max_steps}步；吸取 ${r.aspirate?.rpm} rpm；追送 ${r.chase?.steps}步 / ${r.chase?.rpm} rpm`,
+        `批次 ${r.stock_batch || '未记录'}；${r.temperature_c}℃；瓶${(r.sample_bottles || []).join('、')}；${r.min_steps}—${r.max_steps}步；吸取 ${r.aspirate?.rpm} rpm；追送 ${r.chase?.turns!=null?r.chase.turns+'圈':r.chase?.steps+'步'} / ${r.chase?.rpm} rpm`,
         `${r.collection_basis === 'completed_controller_collection' ? '已关联完成的试送记录' : '人工录入的样品端读数'}；${r.range_basis === 'measured_single_dose_only' ? '仅实测步数点' : '指定范围按比例试用'}；剂量精度与单剂重复性未验证。当前条件是否适用，请用下方预览核查。`,
       ]));
       if (!(state.source_volume_calibrations || []).length) ctx.node('p', '尚无各来源样品端体积参考。', records);
@@ -125,9 +127,9 @@ window.ATPSSourceVolume = (ctx, page) => {
       // A response belongs only to the parameters submitted, never to newer edits.
       if (JSON.stringify(data(pf)) !== JSON.stringify(d)) return;
       const p = r.plan;
-      plan.textContent = `${p.calibration_basis === 'source_endpoint_trial' ? '本来源样品端实测参考（试用）' : '旧清水参考（母液未验证）'}；参考 ${p.reference?.id || p.calibration_reference_id || p.source_volume_calibration_id || '见服务记录'}。请求 ${payload.volume_ml} mL；整数吸取 ${p.total_steps}步；估计 ${p.estimated_ml} mL。\n${p.uncertainty_note || '比例换算仅是估计；实际体积与单剂重复性未验证。'}`;
-      const segments = (p.parameters || []).map((segment, i) => `第${i + 1}段：吸取 ${segment.aspirate?.steps}步 / ${segment.aspirate?.rpm} rpm，追送 ${segment.chase?.steps}步 / ${segment.chase?.rpm} rpm。`);
-      plan.textContent += `\n分段吸取步数：${(p.chunks || []).join('、') || p.total_steps}。\n${segments.join('\n')}`;
+      plan.textContent = `${p.calibration_basis === 'source_endpoint_trial' ? '本来源样品端实测参考（试用）' : p.calibration_basis === 'peg_operator_report_trial' ? 'PEG实收0.42 mL比例修正（新追送待复测）' : '旧清水参考（母液未验证）'}；参考 ${p.reference?.id || p.calibration_reference_id || p.source_volume_calibration_id || '见服务记录'}。请求 ${payload.volume_ml} mL；整数吸取 ${p.total_steps}步；估计 ${p.estimated_ml} mL。\n${p.uncertainty_note || '比例换算仅是估计；实际体积与单剂重复性未验证。'}`;
+      const segments = (p.parameters || []).map((segment, i) => `第${i + 1}次：吸取 ${segment.aspirate?.steps}步 / ${segment.aspirate?.rpm} rpm，追送 ${segment.chase?.turns!=null?segment.chase.turns+'圈':segment.chase?.steps+'步'} / ${segment.chase?.rpm} rpm。`);
+      plan.textContent += `\n一次吸取步数：${(p.chunks || []).join('、') || p.total_steps}。\n${segments.join('\n')}\n单来源加液不自动混合或清洗；组合加料末尾才清洗。`;
       accepted = payload; run.disabled = false;
     } catch (e) { plan.textContent = '不适用 / 无法预览：' + e.message; throw e; }
   }, 'source-volume-preview-form');

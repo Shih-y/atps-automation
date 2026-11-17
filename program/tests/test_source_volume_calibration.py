@@ -31,10 +31,10 @@ class SourceVolumeTests(unittest.TestCase):
         self.assertEqual(a,Controller(self.tmp.name).snapshot()['source_volume_calibrations'][0])
 
     def test_source_reference_scales_with_frozen_chase(self):
-        ref=self.save(min_steps=10,max_steps=160)
+        ref=self.save(min_steps=10,max_steps=240)
         p=self.c.preview_source_volume(dict(source=14,sample=2,volume_ml=1.))['plan']
-        self.assertEqual([100,100],p['chunks']);self.assertEqual(ref['id'],p['reference']['id'])
-        self.assertEqual([900,900],[q['chase']['steps'] for q in p['parameters']])
+        self.assertEqual([200],p['chunks']);self.assertEqual(ref['id'],p['reference']['id'])
+        self.assertEqual([900],[q['chase']['steps'] for q in p['parameters']])
         self.assertEqual('source_endpoint_trial',p['calibration_basis']);self.assertFalse(p['volume_verified'])
         self.assertEqual([],self.c.hardware.moves)
 
@@ -99,13 +99,13 @@ class SourceVolumeTests(unittest.TestCase):
         from controller import Controller
         self.assertEqual([first],Controller(self.tmp.name).snapshot()['source_volume_calibrations'])
 
-    def test_source_plan_used_in_actual_fake_recipe_and_segment_cap(self):
-        self.save(min_steps=1,max_steps=200)
+    def test_source_plan_used_in_actual_fake_recipe_without_segment_cap(self):
+        self.save(min_steps=1,max_steps=400)
         del self.c.lab
         self.c.config['free_debug']=True
         self.c.start(dict(action='volume',source=14,sample=2,volume_ml=1.6));self.c.worker.join(5)
-        self.assertEqual([160,160],[m['steps'] for m in self.c.hardware.moves if m['port']==14])
-        self.assertEqual([900,900],[m['steps'] for m in self.c.hardware.moves if m['port']==2])
+        self.assertEqual([320],[m['steps'] for m in self.c.hardware.moves if m['port']==14])
+        self.assertEqual([900],[m['steps'] for m in self.c.hardware.moves if m['port']==2])
         self.assertTrue(self.c.volume_run['completed'])
 
     def test_saved_reference_does_not_alias_operator_payload(self):
@@ -127,8 +127,21 @@ class SourceVolumeTests(unittest.TestCase):
         self.c.config['geometry']['source_cm']['14']+=1
         with self.assertRaises(ValueError):self.c.save_source_volume_calibration(data)
 
-    def test_slow_aspiration_segments_to_finite_timeout(self):
+    def test_slow_single_aspiration_fails_instead_of_splitting(self):
         self.save(aspirate=dict(steps=10,rpm=.1,timeout_s=40),groups_ml=[.1],min_steps=1,max_steps=80)
-        plan=self.c.preview_source_volume(dict(source=14,sample=2,volume_ml=.8))['plan']
-        self.assertEqual([27,27,26],plan['chunks'])
-        self.assertTrue(all(p['aspirate']['timeout_s']<=120 for p in plan['parameters']))
+        with self.assertRaisesRegex(ValueError,'超时'):
+            self.c.preview_source_volume(dict(source=14,sample=2,volume_ml=.8))
+
+    def test_native_turn_chase_calibration_supersedes_peg_default_without_double_scaling(self):
+        ref=self.save(aspirate=dict(steps=714,rpm=5,timeout_s=62),
+                      chase=dict(turns=30,rpm=60,timeout_s=46),groups_ml=[1.],min_steps=1,max_steps=1500)
+        p=self.c._volume_plan(dict(source=14,sample=2,volume_ml=1.))
+        self.assertEqual([714],p['chunks'])
+        self.assertEqual(ref['chase'],p['parameters'][0]['chase'])
+        self.assertEqual('source_endpoint_trial',p['calibration_basis'])
+        collection=self.c._stock_calibration_plan(self.payload(aspirate=ref['aspirate'],chase=ref['chase']))
+        self.assertEqual(ref['chase'],collection['items'][0]['parameters'][0]['chase'])
+
+    def test_native_chase_timeout_still_validated(self):
+        with self.assertRaisesRegex(ValueError,'超时'):
+            self.save(chase=dict(turns=30,rpm=60,timeout_s=10))

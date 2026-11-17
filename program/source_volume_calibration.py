@@ -5,7 +5,8 @@ import math
 import os
 import secrets
 import statistics
-from decimal import Decimal, ROUND_HALF_UP, ROUND_FLOOR, ROUND_CEILING
+from decimal import Decimal, ROUND_HALF_UP, ROUND_CEILING
+from bottle_routing import sample_port
 from capture_store import timestamp
 from experiment_domain import default_stocks, plumbing_signature
 from stock_density import measured_density_usable
@@ -34,6 +35,7 @@ class SourceVolumeMixin:
             if self.busy or self._user_stopping or self.pending_plug:raise ValueError('操作、停止或待追送液段期间不能保存体积标定')
             source=number(payload.get('source'),10,15,'来源口',True)
             sample=number(payload.get('sample'),1,6,'收集瓶',True)
+            sample_port(self.config,sample)
             doses=number(payload.get('doses'),1,20,'本组剂数',True)
             stock=self._volume_stock(source)
             if 'stock_version' in payload and payload['stock_version']!=stock.get('version'):
@@ -41,10 +43,11 @@ class SourceVolumeMixin:
             temperature=number(payload.get('temperature_c'),0,100,'温度')
             if temperature!=stock.get('temperature_c'):raise ValueError('标定温度与当前母液温度不一致')
             motion={k:pulse_checked(payload.get(k)) for k in ('aspirate','chase')}
+            if 'steps' not in motion['aspirate']:raise ValueError('体积标定吸取必须使用有限步数')
             for p in motion.values():
-                if 'steps' not in p:raise ValueError('体积标定必须使用有限步数')
                 number(p['rpm'],.1,self.config['pump']['max_rpm'],'配置允许转速')
-                if p['timeout_s']<p['steps']*.3/p['rpm']+2:raise ValueError('标定动作超时不足')
+                duration=(60*p['turns'] if 'turns' in p else .3*p['steps'])/p['rpm']
+                if p['timeout_s']<duration+2:raise ValueError('标定动作超时不足')
             collection_id=payload.get('collection_run_id')
             if collection_id is not None:
                 run=self.recipe_run or {}
@@ -56,7 +59,8 @@ class SourceVolumeMixin:
                     raise ValueError('收集记录未完成、已改变或与本次母液/动作条件不一致，请重新收集')
             bottles=payload.get('sample_bottles',[sample])
             if not isinstance(bottles,list) or not bottles or len(bottles)>6:raise ValueError('填写适用瓶口范围')
-            for b in bottles:number(b,1,6,'适用瓶口',True)
+            for b in bottles:
+                number(b,1,6,'适用瓶口',True);sample_port(self.config,b)
             if len(set(bottles))!=len(bottles) or sample not in bottles:raise ValueError('瓶口范围须含实际收集瓶且不重复')
             evidence=payload.get('bottle_scope_evidence','')
             if not isinstance(evidence,str) or len(evidence)>2000:raise ValueError('瓶口依据格式无效')
@@ -75,7 +79,7 @@ class SourceVolumeMixin:
                 readings=[v/density for v in readings]
             mean=statistics.mean(readings)/doses
             rate=mean/motion['aspirate']['steps']
-            if not math.isfinite(rate) or rate<=0 or mean>.8:raise ValueError('标定单剂实际体积须不超过0.8 mL')
+            if not math.isfinite(rate) or rate<=0 or mean>10:raise ValueError('标定单剂实际体积须在0至10 mL内')
             minimum=number(payload.get('min_steps',motion['aspirate']['steps']),1,20000,'试用步数下限',True)
             maximum=number(payload.get('max_steps',motion['aspirate']['steps']),minimum,20000,'试用步数上限',True)
             if not minimum<=motion['aspirate']['steps']<=maximum:raise ValueError('试用范围须包含实测步数')
@@ -108,7 +112,7 @@ class SourceVolumeMixin:
         with self.lock:return dict(ok=True,plan=self._volume_plan(payload))
 
     def _source_volume_plan(self,source,sample,ml):
-        from controller import pulse_checked,number,MAX_SECONDS
+        from controller import pulse_checked,number
         refs=[r for r in self.source_volume_calibrations if r['source']==source]
         if not refs:return None
         scoped=[r for r in refs if sample in r['sample_bottles']]
@@ -118,16 +122,12 @@ class SourceVolumeMixin:
                 ref['geometry_signature']!=plumbing_signature(self.config,source)):
             raise ValueError('本来源体积标定已失效：母液批次、身份、温度、几何或运动配置已改变；请重新标定')
         if sample not in ref['sample_bottles']:raise ValueError('本来源标定不适用于此瓶口，请在实际出口重新标定')
-        rate=Decimal(str(ref['ml_per_step']));limit=Decimal('.8')
+        rate=Decimal(str(ref['ml_per_step']))
         total=int((Decimal(str(ml))/rate).to_integral_value(rounding=ROUND_HALF_UP))
         rpm=Decimal(str(ref['aspirate']['rpm']))
-        duration_cap=int((Decimal(MAX_SECONDS-10)*rpm/Decimal('.36')).to_integral_value(rounding=ROUND_FLOOR))
-        maximum=min(ref['max_steps'],duration_cap,int((limit/rate).to_integral_value(rounding=ROUND_FLOOR)))
-        minimum=ref['min_steps']
-        if total<1 or maximum<minimum:raise ValueError('此体积无法在已记录试用步数范围及0.8 mL液段上限内换算')
-        count=max((total+maximum-1)//maximum,int((Decimal(str(ml))/limit).to_integral_value(rounding=ROUND_CEILING)))
-        if count>60 or count*minimum>total:raise ValueError('请求体积超出标定步数试用范围；请明确记录缩放试用范围或重新实测')
-        base,rem=divmod(total,count);chunks=[base+(i<rem) for i in range(count)]
+        if total<1 or not ref['min_steps']<=total<=ref['max_steps']:
+            raise ValueError('单次请求体积超出标定步数试用范围；不再拆段，请记录适用范围或重新实测')
+        chunks=[total]
         params=[]
         for chunk in chunks:
             timeout=int((Decimal(chunk)*Decimal('.36')/rpm+10).to_integral_value(rounding=ROUND_CEILING))
@@ -139,5 +139,5 @@ class SourceVolumeMixin:
         return dict(requested_ml=ml,estimated_ml=float(total*rate),total_steps=total,chunks=chunks,
                     source=source,sample=sample,parameters=params,reference=copy.deepcopy(ref),
                     calibration_basis='source_endpoint_trial',uncertainty_note=ref['uncertainty_note'],
-                    delivery_mode='segmented' if count>1 else 'single_shot',mixing_performed=False,
+                    delivery_mode='single_shot',mixing_performed=False,
                     actual_ml=None,volume_verified=False,completed=False,completed_plugs=0,started_at=timestamp())

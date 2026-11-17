@@ -40,7 +40,7 @@ class ConsoleHTTPTests(unittest.TestCase):
         self.assertFalse(restarted.water_dose_reference['individual_repeatability_verified'])
         self.assertIsNone(self.c.hardware)
 
-    def test_recipe_route_delivers_all_components_before_mix_and_single_purge(self):
+    def test_recipe_route_delivers_all_components_before_mix_and_single_water_rinse(self):
         self.post('/api/connect',{})
         self.post('/api/action',dict(action='recipe',sample=1,
             items=[dict(source=15,volume_ml=.5),dict(source=14,volume_ml=1),dict(source=13,volume_ml=.3)],
@@ -50,8 +50,10 @@ class ConsoleHTTPTests(unittest.TestCase):
         status,raw=self.request('/api/state');state=json.loads(raw)
         self.assertEqual(200,status)
         self.assertTrue(state['recipe_run']['completed'],state['message'])
-        self.assertEqual([15,1,14,1,14,1,13,1,1,16],[m['port'] for m in self.c.hardware.moves])
-        self.assertEqual(10,state['recipe_run']['completed_commands'])
+        self.assertEqual([15,1,14,1,13,1,1,15],[m['port'] for m in self.c.hardware.moves])
+        self.assertEqual(8,state['recipe_run']['completed_commands'])
+        self.assertFalse(state['recipe_run']['purge_performed'])
+        self.assertTrue(state['recipe_run']['rinse_performed'])
         self.assertIsNone(state['recipe_run']['actual_ml'])
 
     def test_offline_image_routes_save_raw_frame_and_partial_analysis(self):

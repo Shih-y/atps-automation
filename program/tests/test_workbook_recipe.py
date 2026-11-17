@@ -22,33 +22,34 @@ class WorkbookRecipeTests(unittest.TestCase):
         self.assertFalse(self.c.message.startswith('操作未执行'), self.c.message)
         return self.c.snapshot()['recipe_run']
 
-    def test_recipe_mixes_once_after_all_components_then_purges_once(self):
+    def test_recipe_mixes_once_after_all_components_then_rinses_once(self):
         run = self.run_recipe(items=[dict(source=14, volume_ml=1.), dict(source=13, volume_ml=.3)])
         moves = self.c.hardware.moves
-        self.assertEqual([14, 2, 14, 2, 13, 2, 2, 16], [m['port'] for m in moves])
-        self.assertEqual([150, 2105, 150, 2105, 90, 2045, 20], [m['steps'] for m in moves[:-1]])
+        self.assertEqual([14, 2, 13, 2, 2, 15], [m['port'] for m in moves])
+        self.assertEqual([714, 90, 2045, 20, 328], [m['steps'] for m in moves if 'steps' in m])
+        self.assertEqual(30,moves[1]['turns'])
         self.assertEqual('dispense', moves[-2]['direction'])
-        self.assertEqual(15, moves[-1]['turns'])
+        self.assertEqual(328, moves[-1]['steps'])
         self.assertTrue(run['completed'])
         self.assertTrue(run['mixing_performed'])
-        self.assertTrue(run['purge_performed'])
-        self.assertEqual(8, run['completed_commands'])
-        self.assertEqual(3, run['completed_plugs'])
+        self.assertFalse(run['purge_performed']); self.assertTrue(run['rinse_performed'])
+        self.assertEqual(6, run['completed_commands'])
+        self.assertEqual(2, run['completed_plugs'])
         self.assertIsNone(run['actual_ml'])
         self.assertEqual(run['mixing_finished_at'], self.c.samples['2']['last_gas_stop'])
         self.assertFalse(run['volume_verified'])
 
-    def test_split_boundaries_and_requested_versus_quantized(self):
-        for ml, chunks in [(.8, [240]), (.801, [120,120]), (1., [150,150]),
-                           (1.6, [240,240]), (2., [200,200,200]), (1.003, [151,150])]:
+    def test_single_shot_boundaries_and_requested_versus_quantized(self):
+        for ml, chunks in [(.8, [240]), (.801, [240]), (1., [300]),
+                           (1.6, [480]), (2., [600]), (1.003, [301])]:
             with self.subTest(ml=ml):
-                run = self.run_recipe(items=[dict(source=14, volume_ml=ml)])
+                run = self.run_recipe(items=[dict(source=13, volume_ml=ml)])
                 item = run['items'][0]
                 self.assertEqual(chunks, item['chunks'])
                 self.assertEqual(sum(chunks), item['total_steps'])
                 self.assertEqual(ml, item['requested_ml'])
                 self.assertAlmostEqual(sum(chunks)/300, item['estimated_ml'])
-                self.assertTrue(all(n <= 240 for n in chunks))
+                self.assertEqual(1,len(chunks))
 
     def test_invalid_later_item_mix_and_limits_cause_zero_initial_motion(self):
         self.c.config['free_debug'] = True
@@ -68,7 +69,7 @@ class WorkbookRecipeTests(unittest.TestCase):
                 self.assertTrue(self.c.connected)
 
     def test_explicit_no_mix_or_purge_and_configured_mixing(self):
-        run = self.run_recipe(mix_after=False, purge_after=False)
+        run = self.run_recipe(mix_after=False, purge_after=False, rinse_after=False)
         self.assertEqual([14,2], [m['port'] for m in self.c.hardware.moves])
         self.assertFalse(run['mixing_performed'])
         self.assertFalse(run['purge_performed'])
@@ -101,7 +102,7 @@ class WorkbookRecipeTests(unittest.TestCase):
         self.assertEqual(0,run['completed_commands'])
         hardware.move = original
         self.run_recipe(items=[dict(source=13,volume_ml=.15)])
-        self.assertEqual([13,2,2,16],[m['port'] for m in hardware.moves])
+        self.assertEqual([13,2,2,15],[m['port'] for m in hardware.moves])
 
     def reference_payload(self, **extra):
         return dict(mean_per_dose_ml=.2, sample=1, aspirate_steps=45,
@@ -119,8 +120,8 @@ class WorkbookRecipeTests(unittest.TestCase):
         self.assertIsNone(ref['group_rsd_percent'])
         self.assertEqual([], ref['readings_g'])
         self.c.connect()
-        run = self.run_recipe(items=[dict(source=14,volume_ml=1.)])
-        self.assertEqual([113,112], run['items'][0]['chunks'])
+        run = self.run_recipe(items=[dict(source=13,volume_ml=1.)])
+        self.assertEqual([225], run['items'][0]['chunks'])
         self.assertAlmostEqual(1., run['items'][0]['estimated_ml'])
 
     def test_invalid_reference_and_busy_leave_file_and_current_reference_unchanged(self):
@@ -139,12 +140,12 @@ class WorkbookRecipeTests(unittest.TestCase):
         self.assertEqual(before,path.read_bytes())
         self.assertEqual(reference,self.c.water_dose_reference)
 
-    def test_recalibrated_parts_never_round_above_segment_limit(self):
+    def test_water_reference_single_shot_rounds_total_once(self):
         self.c.update_dose_reference(dict(self.reference_payload(),mean_per_dose_ml=.203))
-        run=self.run_recipe(items=[dict(source=14,volume_ml=1.6)])
-        self.assertEqual([119,118,118],run['items'][0]['chunks'])
+        run=self.run_recipe(items=[dict(source=13,volume_ml=1.6)])
+        self.assertEqual([355],run['items'][0]['chunks'])
         self.assertEqual(355,run['items'][0]['total_steps'])
-        self.assertTrue(all(steps*.203/45<=.8 for steps in run['items'][0]['chunks']))
+        self.assertAlmostEqual(355*.203/45,run['items'][0]['estimated_ml'])
 
 
 if __name__ == '__main__': unittest.main()

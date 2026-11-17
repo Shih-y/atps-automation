@@ -22,10 +22,10 @@
 <div class="work-grid">
 <section class="card recipe"><div class="section-head"><h2>单瓶配方</h2><span class="badge">一次启动 · 完整流程</span></div>
 <label class="target">目标样品瓶<select id="recipeSample" data-samples></select></label>
-<p class="muted">按下表顺序加入；体积填 0 跳过。每个液段不超过 0.8 mL，较大体积自动分为更多段。</p>
+<p class="muted">按下表顺序加入；体积填 0 跳过。每个来源一次吸取、一次追送，不再按 0.8 mL 拆段。超出单次指令或标定范围时，整份配方不启动。</p>
 <table class="recipe-table"><thead><tr><th>来源口</th><th>本次加入 / mL</th></tr></thead><tbody id="recipeRows"></tbody></table>
-<div class="sequence">各来源吸取 → 追送到目标瓶 → 全部加入后吹气混合 → 16口吹扫一次</div>
-<p class="muted">来源之间不清洗、不吹扫。混合默认 20步 / 5 rpm；16口向 C端废液吹扫。15口为清水。</p>
+<div class="sequence">各来源一次吸取 → 追送到目标瓶 → 全部加入后吹气混合 → 15口引入约1.5 mL清水，朝废液方向清洗</div>
+<p class="muted">来源之间不清洗、不吹扫；末尾不做16口空气吹扫。混合默认20步 / 5 rpm。末尾清水不计入样品配方；清洗后公共管仍湿，不表示全管洗净或排空，残水可能影响下一次加料。</p>
 <details id="mixingPanel"><summary>可选：调整瓶末吹气混合</summary><div class="fields two"><label>混合步数<input id="mixSteps" type="number" min="1" max="20000" step="1" value="20"></label><label>混合 / rpm<input id="mixRpm" type="number" min="0.1" max="100" step="0.1" value="5"></label><label>动作超时 / s<input id="mixTimeout" type="number" min="1" max="120" step="1" value="10"></label></div><p class="muted">仅在所有来源加入后执行一次。超时须覆盖动作时长；服务会在开始前校验整个配方。</p></details>
 <p id="referenceSummary" class="reference">换算参考：等待服务读回</p><p id="recipePreview" class="muted"></p>
 <button id="recipeStart" class="primary wide">开始整瓶配方</button><p id="recipeProgress" aria-live="polite" class="result">尚未运行。本次总体积上限 10 mL，请自行扣除瓶内已有液体。</p>

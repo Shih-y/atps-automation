@@ -8,6 +8,8 @@ let browser, server, holdAction = null, failCapture = false, holdBegin = null, b
 const state = { connected:false, busy:false, state:'DISCONNECTED', free_debug:true, message:'',
   config:JSON.parse(fs.readFileSync(path.join(program,'config.default.json'),'utf8')), logs:[], samples:{}, sources:{}, imaging:{},
   water_dose_reference:{mean_per_dose_ml:.15,parameters:{sample:1,aspirate_steps:45,aspirate_rpm:5,chase_steps:1000,chase_rpm:15}} };
+// Exercise historical six-bottle identity wiring; mapped wiring has separate coverage.
+delete state.config.sample_port_map;
 function reply(res,data,status=200){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));}
 function check(name,ok){assert(ok,name);checks.push(name);console.log('PASS '+name);}
 async function until(fn){for(let n=0;n<60;n++){if(await fn())return;await new Promise(r=>setTimeout(r,50));}throw Error('Condition timed out');}
@@ -47,7 +49,7 @@ const last = endpoint => requests.filter(r=>r.url===endpoint).at(-1)?.body;
  check('empty recipe is rejected without action request',!requests.some(r=>r.url==='/api/action')&&(await page.locator('#notice').innerText()).includes('体积'));
  await page.locator('#recipeSample').selectOption('6');await page.fill('#volume11','0.8');await page.fill('#volume13','2.0');await page.locator('#recipeStart').click();
  await until(()=>last('/api/action'));
- check('one recipe request carries all nonzero ingredients and bottle end mixing then purge',JSON.stringify(last('/api/action'))===JSON.stringify({action:'recipe',sample:6,items:[{source:11,volume_ml:.8},{source:13,volume_ml:2}],mix_after:true,purge_after:true,mixing:{steps:20,rpm:5,timeout_s:10}}));
+ check('one recipe request carries all nonzero ingredients and bottle end mixing then water rinse',JSON.stringify(last('/api/action'))===JSON.stringify({action:'recipe',sample:6,items:[{source:11,volume_ml:.8},{source:13,volume_ml:2}],mix_after:true,purge_after:false,rinse_after:true,mixing:{steps:20,rpm:5,timeout_s:10}}));
  await page.locator('#mixingPanel summary').click();await page.fill('#mixSteps','40');await page.fill('#mixRpm','10');await page.fill('#mixTimeout','12');await page.locator('#recipeStart').click();await until(()=>last('/api/action')?.mixing?.steps===40);
  check('optional final mixing parameters are editable and submitted with the recipe',JSON.stringify(last('/api/action').mixing)==='{"steps":40,"rpm":10,"timeout_s":12}');
  await page.fill('#mixSteps','20');await page.fill('#mixRpm','5');await page.fill('#mixTimeout','10');await page.locator('#mixingPanel summary').click();
