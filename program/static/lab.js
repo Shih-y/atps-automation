@@ -7,8 +7,9 @@
     '图像判相与复核',
     '相图与主动学习',
     '数据与报告',
+    '液路控制',
   ];
-  const keys = ['equipment', 'design', 'monitor', 'review', 'model', 'data'];
+  const keys = ['equipment', 'design', 'monitor', 'review', 'model', 'data', 'fluidics'];
   const main = document.querySelector('main');
   const legacy = [...main.children];
   const ctx = {
@@ -84,9 +85,9 @@
       this.message.classList.toggle('error', error);
     },
     async request(path, body) {
-      if (body && !this.token) this.token = (await (await fetch('/api/token')).json()).token;
+      if (body && !this.token) this.token = (await (await fetch(window.ATPSPath('/api/token'))).json()).token;
       const r = await fetch(
-        path,
+        window.ATPSPath(path),
         body
           ? {
               method: 'POST',
@@ -252,10 +253,10 @@
         confirmed: '已确认停止',
         unconfirmed: '无法确认停止',
       }[this.state.stop_status];
-      const hardware = ['connectionStatus', 'pumpStatus', 'valveStatus']
-        .map((id) => document.getElementById(id)?.textContent || '')
-        .join(' | ');
-      this.status.textContent = `${hardware} | 当前样品：${current ? this.sampleName(current) : '无'} | 批次：${this.state.active_project_id ? (this.state.projects || []).find((p) => p.id === this.state.active_project_id)?.name || this.state.active_project_id : '未启动'} | ${stop || (this.state.running ? '调度运行' : '调度暂停')} | 硬件急停：实体按钮`;
+      const hardware = [(this.hardwareState?.connected ? '设备已连接' : '设备未连接'), ...['pumpStatus', 'valveStatus'].map(id => document.getElementById(id)?.textContent || '')].join(' | ');
+      const action=this.hardwareState?.active_action?.action;
+      const task=({recipe:'单瓶配方',volume:'指定毫升加料',batch_recipe:'多瓶配方',experiment_recipe:'自动实验配方',manual_motion:'手动有限运行',select_port:'切阀',wash:'清洗',purge:'吹扫',reset:'清洗与吹扫',tubes:'管路处理',bench:'试送校准',read_status:'刷新读回'})[action] || (this.hardwareState?.busy?'动作执行中':'无');
+      this.status.textContent = `${hardware} | 当前任务：${task} | 当前样品：${current ? this.sampleName(current) : '无'} | 批次：${this.state.active_project_id ? (this.state.projects || []).find((p) => p.id === this.state.active_project_id)?.name || this.state.active_project_id : '未启动'} | ${stop || (this.state.running ? '调度运行' : '调度暂停')} | 硬件急停：实体按钮`;
       const unavailable = Object.values(this.serviceHealth).some((available) => available === false);
       this.status.parentElement.dataset.serviceUnavailable = String(unavailable);
       if (unavailable)
@@ -315,14 +316,19 @@
     });
     ctx.pages.push(page);
     const b = ctx.node('button', name, nav, { type: 'button' });
+    b.dataset.page=keys[i];
     b.setAttribute('aria-current', String(i === 0));
-    b.onclick = () => {
-      ctx.pages.forEach((p, j) => (p.hidden = i !== j));
-      nav
-        .querySelectorAll('button')
-        .forEach((n, j) => n.setAttribute('aria-current', String(i === j)));
-    };
+    b.onclick = () => ctx.showPage(keys[i]);
+    if(keys[i]==='fluidics')nav.prepend(b);
   });
+  ctx.showPage = key => {
+    const index=keys.indexOf(key);if(index<0)return;
+    document.body.dataset.labPage=key;
+    ctx.pages.forEach((p,j)=>p.hidden=index!==j);
+    nav.querySelectorAll('button').forEach(b=>b.setAttribute('aria-current',String(b.dataset.page===key)));
+    history.replaceState(null,'','#'+key);
+  };
+  ctx.showPage(keys.includes(location.hash.slice(1))?location.hash.slice(1):'equipment');
   legacy.forEach((n) => ctx.pages[n.classList.contains('imaging') ? 3 : 0].append(n));
   ctx.message = ctx.node('p', '', nav, { role: 'status', id: 'lab-message' });
   const projectBar = ctx.node('div', null);

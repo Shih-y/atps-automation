@@ -172,6 +172,9 @@ class Controller(BenchMixin, TubeMixin, FreeDebugMixin, SourceVolumeMixin, Manua
                 sources=self.sources,samples=self.samples,logs=self.logs,source_volume_calibrations=self.source_volume_calibrations,
                 config=self.config,geometry_signature=signature(self.config),profiles=self.profiles(),imaging=self.capture.current,
                 bench=self.bench,tubes=self.tubes,volume_run=self.volume_run,recipe_run=self.recipe_run,manual_batch_run=self._manual_batch_view(),bulk_water_reference=self.bulk_water_reference,water_dose_reference=self.water_dose_reference,motion_plan=motion_plan(self.config),
+                active_action={k:v for k,v in (getattr(self,'_active_payload',None) or {}).items()
+                    if k in ('action','op','port','sample','source','rotation','experiment_sample_id') } or None,
+                active_command=getattr(self,'active_command',None),
                 hardware_status=self.hardware.get_telemetry() if self.hardware and hasattr(self.hardware,'get_telemetry') else None))
 
     def _pending_view(self):
@@ -385,17 +388,30 @@ class Controller(BenchMixin, TubeMixin, FreeDebugMixin, SourceVolumeMixin, Manua
             except Exception: pass
         timer=threading.Timer(p['timeout_s'],timeout); timer.daemon=True; timer.start()
         try:
+            unit='turns' if 'turns' in p else 'steps'
+            amount=p[unit]
+            with self.lock:
+                self.active_command=dict(port=port,flow=direction,amount=amount,unit=unit,rpm=p['rpm'],
+                    phase='selecting',nominal_duration_s=(amount if unit=='turns' else amount/200)*60/p['rpm'],
+                    requested_at=time.time(),started_at=None)
             self.hardware.select(port,self.cancel)
             self.selected_port=port
             if self.pending_plug and port==sample_port(self.config,self.pending_plug['target']) and direction=='dispense':
                 self.pending_plug.update(target_connected=True,target_selected_at=timestamp())
                 self.log('loaded_target_connected',plug_id=self.pending_plug['id'],port=port,target_selected_at=self.pending_plug['target_selected_at'])
             if before_move: before_move()
+            with self.lock:
+                self.active_command.update(phase='moving',started_at=time.time())
+            rotation=self.config['pump']['aspirate_direction']
+            if direction=='dispense':rotation='cw' if rotation=='ccw' else 'ccw'
+            self.log('pulse_started',port=port,direction=direction,rotation=rotation,
+                action=(getattr(self,'_active_payload',None) or {}).get('action'),**p)
             if 'turns' in p:self.hardware.move_turns(direction,p['turns'],p['rpm'],self.cancel)
             else:self.hardware.move(direction,p['steps'],p['rpm'],self.cancel)
             self._check()
         finally:
             timer.cancel(); timer.join()
+            with self.lock: self.active_command=None
         if timed_out.is_set(): raise HardwareError('有限脉冲超时；停止锁定，禁止盲目重试')
         self.log('pulse_completed',port=port,direction=direction,**p)
 

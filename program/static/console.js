@@ -35,6 +35,18 @@
 
 (() => {
   const $ = id => document.getElementById(id);
+  const demo = window.ATPSDemo;
+  const modeLink = $('modeLink');
+  if (demo) {
+    document.title = '模拟 · 泵阀实验控制台';
+    $('activeMode').textContent = '模拟';
+    modeLink.textContent = '返回实机模式';
+    modeLink.href = '/#fluidics';
+    $('serialStatus').textContent = '使用虚拟泵阀，记录保存在模拟工作区。';
+    for (const id of ['scanPortsBtn','serialPort','autoDetectPort']) $(id).disabled = true;
+    $('connectBtn').textContent = '启用虚拟设备';
+    $('disconnectBtn').textContent = '断开虚拟设备';
+  }
   const samples = [1,2,3,4,5,6], sources = [10,11,12,13,14,15];
   let state = {}, token = '', requesting = false, polling = false, initialized = false, epoch = 0;
   let calibrationBinding = null, stream = null, cameraGeneration = 0, cameraOpening = false;
@@ -50,7 +62,7 @@
   }
   async function api(path, body) {
     if(body !== undefined && !token) { const r=await api('/api/token');token=r.token;if(!token)throw Error('未获取控制令牌，请刷新页面'); }
-    const response=await fetch(path,body === undefined?{cache:'no-store'}:{method:'POST',headers:{'Content-Type':'application/json','X-Control-Token':token},body:JSON.stringify(body)});
+    const response=await fetch(window.ATPSPath(path),body === undefined?{cache:'no-store'}:{method:'POST',headers:{'Content-Type':'application/json','X-Control-Token':token},body:JSON.stringify(body)});
     let data;try { data=await response.json(); } catch { throw Error('服务返回格式异常'); }
     if(!response.ok || data.ok === false || data.error){const error=Error(data.error || `服务请求失败 (${response.status})`);error.status=response.status;throw error;}
     return data;
@@ -79,6 +91,7 @@
   checks('sourceChecks',sources,'data-source',[13,14,15]);checks('sampleChecks',samples,'data-sample-line',[1]);
   const selected = attr => [...document.querySelectorAll(`[${attr}]:checked`)].map(n=>Number(n.getAttribute(attr)));
   async function scanPorts() {
+    if (demo) return;
     const data=await api('/api/serial-ports');$('serialOptions').replaceChildren();
     for(const p of data.ports || [])$('serialOptions').append(node('option',`${p.description || ''}${p.is_ch340?' · CH340':''}`,{value:p.device}));
     if(!$('serialPort').value && data.suggested_port)$('serialPort').value=data.suggested_port;
@@ -87,6 +100,7 @@
   }
   bind('scanPortsBtn',scanPorts,'串口列表已更新；扫描不会打开设备。',false);
   bind('connectBtn',()=>{
+    if (demo) return api('/api/connect', {mode:'demo'});
     const automatic=$('autoDetectPort').checked,port=$('serialPort').value.trim();
     if(!automatic && !port)throw Error('请填写或选择共用串口');
     return api('/api/connect',automatic?{mode:'real',auto_detect:true}:{mode:'real',auto_detect:false,pump_port:port,valve_port:port});
@@ -154,6 +168,17 @@
   }
   function renderTelemetry(available=true) {
     const h=state.hardware_status;
+    const known=available && state.connected && h;
+    const recent=known && Date.now()/1000 - h.pump_at < 3;
+    const moving=recent && h.pump_status==='running';
+    const turn=known && ['cw','ccw'].includes(h.direction) ? h.direction : '';
+    $('pumpWheel').dataset.turn=moving ? turn : '';
+    $('topPump').textContent=moving ? ({cw:'正转 ↻',ccw:'反转 ↺'}[turn] || '运行中') :
+      known && h.pump_status==='stopped' ? '停止' : known && h.pump_status==='starting' ? '启动中' : '状态未知';
+    const port=known && h.valve_status==='confirmed' ? h.valve_port : null;
+    $('valveDial').classList.toggle('known',port!=null);
+    $('valveDial').style.setProperty('--angle', ((port-1)*22.5)+'deg');
+    $('topValve').textContent=port!=null ? port+' 口' : known && h.valve_status==='switching' ? '切换至 '+(h.target_port ?? '?')+' 口' : '未知';
     if(!available || !state.connected || !h){$('pumpStatus').textContent=!available?'通信中断 · 状态未知':h?.pump_status==='stop_requested'?'已请求停止 · 未确认':'状态未知';$('valveStatus').textContent='阀位未知';$('flowStatus').textContent='等待有效设备读回';return;}
     const fresh=h.pump_at!=null && Date.now()/1000-h.pump_at<3;
     const direction=h.direction==='cw'?'CW 正转':h.direction==='ccw'?'CCW 反转':'转向未知';
@@ -190,10 +215,12 @@
   function render() {
     renderBottleRouting();
     manualBatch?.render(state);
-    $('connectionStatus').textContent=state.connected?`${state.config?.communication?.port || '串口未知'} · 泵阀共用 RS485`:'未连接';
+    $('connectionStatus').textContent=demo?(state.connected?'虚拟设备就绪':'虚拟设备已断开'):state.connected?`${state.config?.communication?.port || '串口未知'} · 泵阀共用 RS485`:'未连接';
     $('serverMessage').textContent=state.message || '';
-    if(state.connected)$('serialStatus').textContent=`实际连接 ${state.config?.communication?.port || '未知串口'}；连接与泵运动状态分别显示。`;
+    if(!demo && state.connected)$('serialStatus').textContent=`实际连接 ${state.config?.communication?.port || '未知串口'}；连接与泵运动状态分别显示。`;
     renderTelemetry();preview();
+    if(window.ATPSLab)window.ATPSLab.hardwareState=state;
+    window.dispatchEvent(new CustomEvent('atps:hardware-state',{detail:{state,available:true}}));
     if(!initialized && state.water_dose_reference?.parameters) {
       initialized=true;const p=state.water_dose_reference.parameters;
       for(const [id,key] of [['calSample','sample'],['calAspirateSteps','aspirate_steps'],['calAspirateRpm','aspirate_rpm'],['calChaseSteps','chase_steps'],['calChaseRpm','chase_rpm']])if(p[key]!=null)$(id).value=p[key];
@@ -207,19 +234,46 @@
   async function poll() {
     if(polling)return;polling=true;
     try { state=await api('/api/state');render();window.ATPSLab?.setServiceHealth('hardware',true); }
-    catch(e){renderTelemetry(false);$('serverMessage').textContent='服务不可用：'+e.message;window.ATPSLab?.setServiceHealth('hardware',false);}
+    catch(e){window.dispatchEvent(new CustomEvent('atps:hardware-state',{detail:{state,available:false}}));renderTelemetry(false);$('serverMessage').textContent='服务不可用：'+e.message;window.ATPSLab?.setServiceHealth('hardware',false);}
     finally{polling=false;}
   }
   async function listCameras() {
+    if(demo) {
+      $('cameraSelect').replaceChildren(node('option','五瓶模拟画面',{value:'demo'}));
+      return;
+    }
     if(!navigator.mediaDevices?.enumerateDevices)throw Error('当前浏览器不支持本地摄像头枚举');
     const chosen=$('cameraSelect').value,devices=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='videoinput');
     $('cameraSelect').replaceChildren(node('option','系统默认摄像头',{value:''}));
     devices.forEach((d,i)=>$('cameraSelect').append(node('option',d.label || `本地摄像头 ${i+1}（授权后显示名称）`,{value:d.deviceId})));
     if(devices.some(d=>d.deviceId===chosen))$('cameraSelect').value=chosen;
   }
-  function closeCamera() { ++cameraGeneration;cameraOpening=false;if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;$('cameraVideo').srcObject=null;$('cameraVideo').hidden=true;$('framePlaceholder').hidden=!!frame;$('cameraStatus').textContent='摄像头已关闭；已取帧仍可分析。'; }
+  let virtualCamera=null;
+  function openVirtualCamera() {
+    virtualCamera=document.createElement('canvas');
+    virtualCamera.width=800; virtualCamera.height=400;
+    const g=virtualCamera.getContext('2d');
+    g.fillStyle='#eeeeeb'; g.fillRect(0,0,800,400);
+    for(let i=0;i<5;i++){
+      const left=i*160+30;
+      g.fillStyle='#626e78'; g.fillRect(left,42,100,306);
+      g.fillStyle='#eff7fa'; g.fillRect(left+3,46,94,298);
+      g.fillStyle='#c9dfe3'; g.fillRect(left+3,97,94,247);
+      if(i%2){g.fillStyle='#8ab9bd';g.fillRect(left+3,210,94,134);}
+      g.fillStyle='#28323a';g.font='16px sans-serif';g.fillText(String(5-i)+' 号瓶',left+23,376);
+    }
+    freezeVirtualFrame();
+    $('cameraStatus').textContent='模拟相机已打开 · 五瓶示例图，可取帧、判相与归档。';
+  }
+  function freezeVirtualFrame(){
+    setFrame(virtualCamera,800,400,new Date().toISOString(),true);
+    rois=[1,2,3,4,5].map(sample=>({sample,x:(5-sample)*160+37,y:110,width:86,height:220}));
+    manualRois=true;drawRois();drawFrame();
+  }
+  function closeCamera() { virtualCamera=null; ++cameraGeneration;cameraOpening=false;if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;$('cameraVideo').srcObject=null;$('cameraVideo').hidden=true;$('framePlaceholder').hidden=!!frame;$('cameraStatus').textContent='摄像头已关闭；已取帧仍可分析。'; }
   local('cameraList',listCameras);
   local('cameraOpen',async()=>{
+    if(demo){await listCameras();openVirtualCamera();return;}
     if(cameraOpening || stream)throw Error('摄像头正在打开或已打开；更换设备请先关闭');
     if(!navigator.mediaDevices?.getUserMedia)throw Error('当前浏览器不支持本地摄像头');
     cameraOpening=true;const generation=++cameraGeneration;
@@ -241,6 +295,7 @@
     $('archiveStatus').textContent='当前帧尚未保存。';$('manualLabelStatus').textContent='';$('analysisSummary').textContent='当前帧尚未分析。';$('analysisRows').replaceChildren();drawRois();drawFrame();
   }
   local('freezeBtn',()=>{
+    if(virtualCamera){freezeVirtualFrame();return;}
     const video=$('cameraVideo');if(!stream || !video.videoWidth)throw Error('请先打开摄像头并等待画面');
     setFrame(video,video.videoWidth,video.videoHeight,new Date().toISOString(),true);
     $('cameraStatus').textContent='已取当前帧（未镜像）；摄像头仍开启，可再次取帧比较。';
@@ -330,5 +385,5 @@
   },'人工复核记录已保存。');
   window.addEventListener('pagehide',closeCamera);
   preview();
-  (async()=>{try{const data=await api('/api/token');token=data.token;await poll();await scanPorts();}catch(e){notice(e.message,true);}setInterval(poll,800);})();
-window.ATPSCamera={status(){const v=$('cameraVideo');const ready=!!stream&&v.readyState>=2&&!v.paused&&frameOrigin==='camera'&&frame&&frame.width===v.videoWidth&&frame.height===v.videoHeight&&rois.length===5;return {ready,rois:ready?rois.map(r=>({...r})):[],width:ready?v.videoWidth:0,height:ready?v.videoHeight:0};},capture(){const v=$('cameraVideo');if(!this.status().ready)throw Error('实时相机离线');const c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(v,0,0);return {...this.status(),png_base64:c.toDataURL('image/png').split(',')[1],captured_at:new Date().toISOString(),analysis:window.PhaseAnalysis.analyzeFrame(x.getImageData(0,0,c.width,c.height),{rois})};}};})();
+  (async()=>{try{const data=await api('/api/token');token=data.token;await poll();await scanPorts();}catch(e){notice(e.message,true);}setInterval(poll,400);})();
+window.ATPSCamera={status(){if(virtualCamera){const ready=frameOrigin==='camera' && rois.length===5;return {ready,rois:ready?rois.map(r=>({...r})):[],width:800,height:400};}const v=$('cameraVideo');const ready=!!stream&&v.readyState>=2&&!v.paused&&frameOrigin==='camera'&&frame&&frame.width===v.videoWidth&&frame.height===v.videoHeight&&rois.length===5;return {ready,rois:ready?rois.map(r=>({...r})):[],width:ready?v.videoWidth:0,height:ready?v.videoHeight:0};},capture(){const v=virtualCamera || $('cameraVideo');if(!this.status().ready)throw Error('实时相机离线');const c=document.createElement('canvas');c.width=this.status().width;c.height=this.status().height;const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(v,0,0);return {...this.status(),png_base64:c.toDataURL('image/png').split(',')[1],captured_at:new Date().toISOString(),analysis:window.PhaseAnalysis.analyzeFrame(x.getImageData(0,0,c.width,c.height),{rois})};}};})();

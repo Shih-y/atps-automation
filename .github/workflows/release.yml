@@ -40,7 +40,7 @@ jobs:
         run: npm install --no-save playwright@1.62.1
       - name: Interface and synthetic video regression
         run: |
-          foreach ($testScript in @('experiment_console.js','continuation_console.js','current_console.js','integrated_console.js','experiment_live_frame.js','continuation_live_frame.js','autonomous_console.js','autonomous_live_frame.js','source_volume_console.js')) {
+          foreach ($testScript in @('experiment_console.js','continuation_console.js','current_console.js','integrated_console.js','experiment_live_frame.js','continuation_live_frame.js','autonomous_console.js','autonomous_live_frame.js','source_volume_console.js','manual_batch_console.js','fluidics_console.js')) {
             node "tests/browser/$testScript"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }

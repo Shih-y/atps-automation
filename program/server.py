@@ -1,6 +1,7 @@
 """Loopback-only local control. No remote bind, no serial probing, real controls, no startup checklist."""
 import argparse
 import json
+from types import SimpleNamespace
 import secrets
 import socket
 import sys
@@ -26,6 +27,8 @@ class Server(ThreadingHTTPServer):
     def __init__(self,address,controller):
         if address[0] != '127.0.0.1': raise ValueError('只能绑定127.0.0.1')
         self.controller=controller; self.token=secrets.token_urlsafe(32)
+        self.simulation = None
+        self.sim_lock = threading.Lock()
         self.static=Path(__file__).with_name('static')
         super().__init__(address,Handler)
         try:
@@ -36,7 +39,24 @@ class Server(ThreadingHTTPServer):
             super().server_close()
             raise
 
+    def simulation_workspace(self):
+        with self.sim_lock:
+            if self.simulation is None:
+                from simulated_hardware import SimulationController
+                from experiment_service import ExperimentService
+                sim = SimulationController(self.controller.directory / 'simulation')
+                sim.connect()
+                sim.lab = ExperimentService(sim)
+                self.simulation = SimpleNamespace(controller=sim, lab=sim.lab, token=secrets.token_urlsafe(32))
+            return self.simulation
+
     def server_close(self):
+        with self.sim_lock:
+            if self.simulation:
+                sim = self.simulation
+                sim.lab.close()
+                sim.controller.disconnect()
+                self.simulation = None
         lab=getattr(self,'lab',None)
         try:
             if lab:lab.close()
@@ -54,6 +74,14 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'")
         self.end_headers(); self.wfile.write(raw)
 
+    def workspace(self):
+        if urlsplit(self.path).path.startswith('/simulation/'):
+            return self.server.simulation_workspace()
+        return self.server
+
+    def route(self):
+        return urlsplit(self.path).path.removeprefix('/simulation') if urlsplit(self.path).path.startswith('/simulation/') else urlsplit(self.path).path
+
     def trusted(self,mutation=False):
         host=self.headers.get('Host','')
         allowed={f'127.0.0.1:{self.server.server_port}',f'localhost:{self.server.server_port}'}
@@ -61,33 +89,33 @@ class Handler(BaseHTTPRequestHandler):
         origin=self.headers.get('Origin')
         if origin and origin not in {f'http://{h}' for h in allowed}: raise ValueError('Origin不允许')
         if self.headers.get('Sec-Fetch-Site')=='cross-site': raise ValueError('不接受跨站请求')
-        if mutation and not secrets.compare_digest(self.headers.get('X-Control-Token',''),self.server.token): raise ValueError('缺少本地控制令牌，请刷新页面')
+        if mutation and not secrets.compare_digest(self.headers.get('X-Control-Token',''),self.workspace().token): raise ValueError('缺少本地控制令牌，请刷新页面')
 
     def do_GET(self):
         try:
-            self.trusted(); path=urlsplit(self.path).path; c=self.server.controller
-            if path=='/api/token': return self.reply({'token':self.server.token})
+            self.trusted(); workspace=self.workspace(); path=self.route(); c=workspace.controller
+            if path=='/api/token': return self.reply({'token':workspace.token})
             if path=='/api/state': return self.reply(c.snapshot())
             if path=='/api/config': return self.reply(c.snapshot()['config'])
-            if path=='/api/serial-ports': return self.reply(scan_serial_ports())
-            if path=='/api/lab/state':return self.reply(self.server.lab.snapshot())
+            if path=='/api/serial-ports': return self.reply(scan_serial_ports() if workspace is self.server else dict(ports=[], ch340_ports=[], suggested_port=None, message='模拟模式'))
+            if path=='/api/lab/state':return self.reply(workspace.lab.snapshot())
             if path=='/api/lab/export':
                 project_id=parse_qs(urlsplit(self.path).query).get('project_id',[None])[0]
-                return self.reply(self.server.lab.export_zip(project_id),mime='application/zip',filename='ATPS-experiment-export.zip')
+                return self.reply(workspace.lab.export_zip(project_id),mime='application/zip',filename='ATPS-experiment-export.zip' if workspace is self.server else 'ATPS-simulation-export.zip')
             if path.startswith('/api/lab/backup/'):
                 backup_id=path.removeprefix('/api/lab/backup/')
-                return self.reply(self.server.lab.backup_path(backup_id).read_bytes(),mime='application/zip',filename='ATPS-project-backup.zip')
+                return self.reply(workspace.lab.backup_path(backup_id).read_bytes(),mime='application/zip',filename='ATPS-project-backup.zip')
             if path.startswith('/api/lab/image/'):
                 image_id=path.removeprefix('/api/lab/image/')
                 if '/' in image_id or '%' in image_id or '..' in image_id:raise ValueError('图像ID无效')
-                return self.reply(self.server.lab.image_path(image_id).read_bytes(),mime='image/png')
+                return self.reply(workspace.lab.image_path(image_id).read_bytes(),mime='image/png')
             if path.startswith('/api/images/'):
                 parts=path.split('/')
                 if len(parts)!=5: raise ValueError('图片路径无效')
                 return self.reply(c.capture.image_path(parts[3],parts[4]).read_bytes(),mime='image/png')
             if path in ('/','/index.html'): return self.reply((self.server.static/'index.html').read_bytes(),mime='text/html; charset=utf-8')
             if path in ('/app.js','/bench.js','/live.js','/tubes.js','/free.js','/style.css','/console.js','/console.css','/phase_analysis.js','/lab.js','/lab.css',
-                        '/lab-equipment.js','/lab-source-volume.js','/lab-design.js','/lab-monitor.js','/lab-review.js','/lab-model.js','/lab-data.js','/manual-batch.js'):
+                        '/lab-equipment.js','/lab-source-volume.js','/lab-design.js','/lab-monitor.js','/lab-review.js','/lab-model.js','/lab-data.js','/manual-batch.js','/lab-fluidics.js','/fluidics.css'):
                 mime='text/javascript; charset=utf-8' if path.endswith('.js') else 'text/css; charset=utf-8'
                 return self.reply((self.server.static/path[1:]).read_bytes(),mime=mime)
             return self.reply({'ok':False,'error':'未找到'},404)
@@ -108,14 +136,14 @@ class Handler(BaseHTTPRequestHandler):
             def no_constant(x): raise ValueError('不接受NaN/Infinity')
             body=json.loads(raw,parse_constant=no_constant)
             if not isinstance(body,dict): raise ValueError('请求须为对象')
-            c=self.server.controller; path=urlsplit(self.path).path
+            workspace=self.workspace(); c=workspace.controller; path=self.route()
             if path.startswith('/api/lab/'):
-                return self.reply(self.server.lab.handle(path.removeprefix('/api/lab/'),body))
+                return self.reply(workspace.lab.handle(path.removeprefix('/api/lab/'),body))
             if path=='/api/connect': c.connect(body.get('mode','real'),body.get('pump_port',body.get('port','')),body.get('valve_port',body.get('port','')),auto_detect=body.get('auto_detect',False))
             elif path=='/api/disconnect':
-                try:self.server.lab.handle('stop',{})
+                try:workspace.lab.handle('stop',{})
                 finally:c.disconnect()
-            elif path=='/api/stop': self.server.lab.handle('stop',{})
+            elif path=='/api/stop': workspace.lab.handle('stop',{})
             elif path=='/api/config': c.configure(body.get('config'))
             elif path=='/api/calibration/report': return self.reply(c.calibration_report(body))
             elif path=='/api/bench/report': return self.reply(c.bench_report(body))

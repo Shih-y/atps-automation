@@ -54,7 +54,7 @@ window.ATPSLabPages.data = (ctx, page) => {
       const result = await ctx.api('backup', body);
       ctx.tell('本地备份已保存：' + (result.backup?.created_at || result.backup?.id || ''));
       if (result.backup?.download_url) {
-        backupLink.href = result.backup.download_url;
+        backupLink.href = window.ATPSPath(result.backup.download_url);
         backupLink.hidden = false;
       }
     },
@@ -96,7 +96,7 @@ window.ATPSLabPages.data = (ctx, page) => {
     if (unavailable) link.removeAttribute('href');
     else
       link.href =
-        '/api/lab/export' + (current ? '?project_id=' + encodeURIComponent(ctx.projectId) : '');
+        window.ATPSPath('/api/lab/export') + (current ? '?project_id=' + encodeURIComponent(ctx.projectId) : '');
     const filtered = samples.filter((s) => {
       const p = projects.find((p) => p.id === s.project_id),
         date = (s.created_at || p?.created_at || '').slice(0, 10);

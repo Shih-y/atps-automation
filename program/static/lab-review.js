@@ -235,7 +235,7 @@ window.ATPSLabPages.review = (ctx, page) => {
         );
       if (f.generation !== s.generation) line.append(' · 旧阶段，仅供对照');
       const link = ctx.node('a', '查看整幅原图', item, {
-        href: f.url || '/api/lab/image/' + encodeURIComponent(f.id),
+        href: window.ATPSPath(f.url || '/api/lab/image/' + encodeURIComponent(f.id)),
         target: '_blank',
         rel: 'noopener',
       });

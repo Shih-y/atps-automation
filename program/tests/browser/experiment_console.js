@@ -51,7 +51,7 @@ const check=(name,value)=>{assert(value,name);console.log('PASS '+name);};
   await page.goto('http://127.0.0.1:'+server.address().port);await page.waitForSelector('#lab-nav');
   const tab=name=>page.getByRole('button',{name,exact:true}).click();
   const submit=async(id,url)=>{const count=calls.filter(c=>c.url===url).length;await page.locator('#'+id+' button[type=submit]').click();await until(()=>calls.filter(c=>c.url===url).length>count);await until(async()=>await page.locator('#'+id+' button[type=submit]').isEnabled());};
-  check('six pages; manual bottle 6 retained',await page.locator('#lab-nav button').count()===6&&await page.locator('#recipeSample option').count()===6);
+  check('six original pages plus fluidics; legacy bottle selector retained',await page.locator('#lab-nav button').count()===7&&await page.locator('#recipeSample option').count()===6);
   await tab('数据与报告');check('no selected project cannot export all data implicitly',await page.locator('#export-project').getAttribute('href')===null&&await page.locator('#export-project').getAttribute('aria-disabled')==='true');await tab('设备与校准');
   await submit('stock-form','/api/lab/stock');await page.locator('#mass-calibration-form [name=groups]').fill('.75,.76,.75');await submit('mass-calibration-form','/api/lab/calibration');
   await tab('实验设计');await page.locator('#project-form [name=safe_mass_limit_g]').fill('1.2');await submit('project-form','/api/lab/project');

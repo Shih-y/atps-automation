@@ -3,11 +3,15 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>泵阀实验控制台</title>
-<link rel="stylesheet" href="/console.css"><link rel="stylesheet" href="/lab.css"><script defer src="/lab-source-volume.js"></script><script defer src="/lab-equipment.js"></script><script defer src="/lab-design.js"></script><script defer src="/lab-monitor.js"></script><script defer src="/lab-review.js"></script><script defer src="/lab-model.js"></script><script defer src="/lab-data.js"></script><script defer src="/lab.js"></script>
+<script>window.ATPSDemo = location.pathname.startsWith('/simulation/'); window.ATPSPath = path => (window.ATPSDemo ? '/simulation' : '') + path;</script>
+<link rel="stylesheet" href="/console.css"><link rel="stylesheet" href="/lab.css"><link rel="stylesheet" href="/fluidics.css"><script defer src="/lab-source-volume.js"></script><script defer src="/lab-equipment.js"></script><script defer src="/lab-design.js"></script><script defer src="/lab-monitor.js"></script><script defer src="/lab-review.js"></script><script defer src="/lab-model.js"></script><script defer src="/lab-data.js"></script><script defer src="/lab-fluidics.js"></script><script defer src="/lab.js"></script>
 <script defer src="/phase_analysis.js"></script><script defer src="/manual-batch.js"></script><script defer src="/console.js"></script>
 </head>
 <body>
-<header><div class="window-drag-area"><span class="eyebrow">ATPS · 实验操作</span><h1>泵阀控制台</h1></div><div id="windowControls" class="window-controls" role="group" aria-label="窗口操作" hidden>
+<header><div class="window-drag-area"><span class="eyebrow">ATPS · 实验操作</span><h1>泵阀控制台</h1></div><div id="machineStrip" aria-label="泵阀实时状态">
+<div class="machineItem"><span id="pumpWheel" aria-hidden="true">✣</span><span><small>泵转向</small><strong id="topPump">状态未知</strong></span></div>
+<div class="machineItem"><span id="valveDial" aria-hidden="true"><i></i></span><span><small>阀位</small><strong id="topValve">未知</strong></span></div>
+</div><div id="windowControls" class="window-controls" role="group" aria-label="窗口操作" hidden>
 <button id="windowMinimize" type="button" aria-label="最小化" title="最小化"><svg viewBox="0 0 10 10" aria-hidden="true" focusable="false"><path d="M0 5.5h10"/></svg></button>
 <button id="windowMaximize" type="button" aria-label="最大化" title="最大化"><svg class="maximize-icon" viewBox="0 0 10 10" aria-hidden="true" focusable="false"><path d="M.5.5h9v9h-9z"/></svg><svg class="restore-icon" viewBox="0 0 10 10" aria-hidden="true" focusable="false"><path d="M2.5 2.5v-2h7v7h-2M.5 2.5h7v7h-7z"/></svg></button>
 <button id="windowClose" type="button" aria-label="关闭窗口" title="关闭窗口"><svg viewBox="0 0 10 10" aria-hidden="true" focusable="false"><path d="m.5.5 9 9m0-9-9 9"/></svg></button>
@@ -15,6 +19,7 @@
 <div id="workspace"><main>
 <div id="notice" role="status" aria-live="polite">选择参数后直接操作；动作忙时会提示，不会排队。</div>
 <section class="card connection"><div class="section-head"><h2>设备连接</h2><span id="connectionStatus" class="badge">未连接</span></div>
+<div class="mode-settings"><span>当前工作区：<strong id="activeMode">实机</strong></span><a id="modeLink" href="/simulation/#fluidics">进入模拟模式</a><p>模拟泵按1倍标称时长运行：圈数×60÷转速；步指令沿用约200步/圈的工程估计。阀切换暂按0.5秒估计，通信和机械延时仍须实机测量。模拟记录单独保存。</p></div>
 <div class="controls"><label class="check"><input type="checkbox" id="autoDetectPort" checked>自动识别 CH340</label><label>共用串口<input id="serialPort" list="serialOptions" placeholder="手动输入或选择 COM 口"><datalist id="serialOptions"></datalist></label><button id="scanPortsBtn">扫描串口</button><button id="connectBtn" class="primary">连接设备</button><button id="disconnectBtn">断开</button></div>
 <p id="serialStatus" class="muted">泵和阀共用同一条 RS485 串口。连接不启动动作。</p>
 <div class="telemetry"><div><small>泵读回</small><strong id="pumpStatus">状态未知</strong></div><div><small>阀读回</small><strong id="valveStatus">阀位未知</strong></div><div><small>流向</small><strong id="flowStatus">等待有效读回</strong></div></div><p id="telemetryDetail" class="muted">界面不推断已停止、已充满或实际交付量。</p>
